@@ -17,7 +17,7 @@ protivník klasická heuristická AI.
 | **Hádej slovo** | Wordle ve stylu: 5 písmen, 6 pokusů, zpětná vazba po pozicích se správným počítáním duplicit (dvě stejná písmena ≠ dvě žlutá tajemství). |
 | **20 otázek** | Server se ptá ano/ne, poslední položkou je i jeho tip (limit 20). Když se splete, naučíte ho: nový pojem + otázka, která je pro něj ANO a pro marný tip NE. Naučený strom zůstává (v paměti serveru) i pro další hry. |
 | **Souboj (RPG)** | Tla na tlač: útok (10–18), speciální útok (20–30, 30 % minout, cooldown 3 kola) a léčení (15–25). Protivník: klasická heuristika nebo decision model z Ollamy (tah + rozdělení pravděpodobností), který při selhání čitelně spadne na heuristiku. |
-| **Piškvorky** | Gomoku 15×15: pět v řadě vyhrává (řádek, sloupec, diagonála), X začíná. Režim X i O (člověk nebo model z Ollamy) se volí při startu, povolen je i model proti modelu. Model sahá přes strukturovaný chat; po třech marných pokusech tah viditelně převezme záchranná heuristika. |
+| **Piškvorky** | Gomoku 15×15: pět v řadě vyhrává (řádek, sloupec, diagonála), X začíná. Režim X i O (člověk nebo model z Ollamy) se volí při startu, povolen je i model proti modelu. Chatovací model sahá přes strukturovaný chat, decision model (bez `completion`) přes decision protokol; po třech marných pokusech tah viditelně převezme záchranná heuristika. |
 
 ![Šibenice](docs/screenshots/sibenice.png)
 
@@ -47,8 +47,13 @@ Dotaz obsahuje herní stav (kolo, HP, cooldowny, poslední akce hráče a posled
 řádky logu) a dvě pojmenované otázky — `akce` = `choice` s kritérii jen pro **povolené
 akce** (`attack` / `special` / `heal`), ze kterých model vybere jednu a vrátí i rozdělení
 pravděpodobností a jistotu, a `ohrozeni` = `noul` („je hráč v ohrožení?“ s
-pravděpodobností). Tah v piškvorkách (`row` + `col`) zasílá na `POST /api/chat` s
-vynuceným schématem odpovědi, bez streamování a bez „thinking“ bloků. Nastavení je v
+pravděpodobností). Tah v piškvorkách (`row` + `col`) chatovací modely zasílají na
+`POST /api/chat` s vynuceným schématem odpovědi, bez streamování a bez „thinking“
+bloků; decision modely (capability `decision` bez `completion`) hrají přes
+`POST /v1/systemone`, kde `pole` je jedna `choice` otázka a kritéria jsou volná
+kandidátní pole s taktickými popisy (dokončí vlastní pětku / zablokuje soupeřovu
+pětku / sousedí s kameny) — každá odpověď modelu je tedy legální tah — a protokol
+se při tahu volí podle capability z kešovaného seznamu modelů. Nastavení je v
 `SimpleGame/appsettings.json` (sekce
 `Ollama`: `BaseUrl`, časové limity 3 s pro seznam modelů, 10 s pro rozhodnutí a 45 s pro
 tah, `KeepAlive`). Zásadní chování:

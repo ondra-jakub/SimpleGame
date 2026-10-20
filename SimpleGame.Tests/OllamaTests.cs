@@ -649,4 +649,183 @@ public sealed class OllamaTests
         cts.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
     }
+
+    private static string SquareDecisionResponse(string choice = "r7c8") =>
+        "{\"model\":\"d1:latest\",\"answers\":{\"pole\":{\"type\":\"choice\",\"choice\":\"" + choice +
+        "\",\"probabilities\":{\"r7c8\":0.5},\"confidence\":0.4}},\"usage\":{\"input_tokens\":400}}";
+
+    private static readonly IReadOnlyList<(int Row, int Col, string Description)> SquareCandidates =
+    [
+        (7, 8, "řádek 7, sloupec 8: volné pole sousedící s kameny"),
+        (7, 3, "řádek 7, sloupec 3: volné pole, které zablokuje soupeřovu pětku")
+    ];
+
+    [Fact]
+    public async Task SquareDecision_ValidAnswer_ParsesSquareKeyAndSendsChoiceQuestion()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson(SquareDecisionResponse());
+        var decision = await client.ChooseSquareDecisionAsync("d1:latest", SquareContext(), SquareCandidates, CancellationToken.None);
+
+        Assert.Equal(7, decision.Row);
+        Assert.Equal(8, decision.Col);
+        Assert.Null(decision.FallbackReason);
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal("POST http://ollama/v1/systemone", handler.Requests[0]);
+
+        using var body = JsonDocument.Parse(handler.Bodies[0]!);
+        var root = body.RootElement;
+        Assert.Equal("d1:latest", root.GetProperty("model").GetString());
+        Assert.False(root.GetProperty("stream").GetBoolean());
+        Assert.Equal("10m", root.GetProperty("keep_alive").GetString());
+
+        var state = root.GetProperty("state");
+        Assert.Equal(15, state.GetProperty("size").GetInt32());
+        Assert.Equal("X", state.GetProperty("playerSymbol").GetString());
+        Assert.Equal(15, state.GetProperty("boardText").GetString()!.Split('\n').Length);
+        Assert.Equal(1, state.GetProperty("moveNumber").GetInt32());
+        Assert.Equal(JsonValueKind.Null, state.GetProperty("lastMoveIndex").ValueKind);
+        Assert.Equal(JsonValueKind.Null, state.GetProperty("attemptFeedback").ValueKind);
+
+        var pole = root.GetProperty("questions").GetProperty("pole");
+        Assert.Equal("choice", pole.GetProperty("type").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(pole.GetProperty("instructions").GetString()));
+        var criteria = pole.GetProperty("criteria");
+        Assert.Equal(new string?[] { "r7c8", "r7c3" }, criteria.EnumerateObject().Select(e => e.Name));
+        Assert.Equal("řádek 7, sloupec 8: volné pole sousedící s kameny", criteria.GetProperty("r7c8").GetString());
+        Assert.Equal("řádek 7, sloupec 3: volné pole, které zablokuje soupeřovu pětku", criteria.GetProperty("r7c3").GetString());
+    }
+
+    [Fact]
+    public async Task SquareDecision_AttemptFeedbackAndLastMove_TravelInState()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson(SquareDecisionResponse());
+        var context = SquareContext("Model zvolil jiz obsazene pole (radek 0, sloupec 0).", lastMoveIndex: 3);
+        var decision = await client.ChooseSquareDecisionAsync("d1:latest", context, SquareCandidates, CancellationToken.None);
+        Assert.Equal(7, decision.Row);
+
+        using var body = JsonDocument.Parse(handler.Bodies[0]!);
+        var state = body.RootElement.GetProperty("state");
+        Assert.Equal("Model zvolil jiz obsazene pole (radek 0, sloupec 0).", state.GetProperty("attemptFeedback").GetString());
+        Assert.Equal(3, state.GetProperty("lastMoveIndex").GetInt32());
+    }
+
+    [Fact]
+    public async Task SquareDecision_InvalidAnswers_FallBack()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson("{\"model\":\"d1:latest\"}");
+        var missing = await client.ChooseSquareDecisionAsync("d1:latest", SquareContext(), SquareCandidates, CancellationToken.None);
+        Assert.Null(missing.Row);
+        Assert.Null(missing.Col);
+        Assert.Contains("neplatne souradnice", missing.FallbackReason);
+
+        var (client2, handler2, _, _) = Create();
+        handler2.RespondWithJson("{\"answers\":{}}");
+        var noQuestion = await client2.ChooseSquareDecisionAsync("d1:latest", SquareContext(), SquareCandidates, CancellationToken.None);
+        Assert.Null(noQuestion.Row);
+        Assert.Contains("neplatne souradnice", noQuestion.FallbackReason);
+
+        var (client3, handler3, _, _) = Create();
+        handler3.RespondWithJson("{\"answers\":{\"pole\":{}}}");
+        var noChoice = await client3.ChooseSquareDecisionAsync("d1:latest", SquareContext(), SquareCandidates, CancellationToken.None);
+        Assert.Null(noChoice.Row);
+        Assert.Contains("neplatne souradnice", noChoice.FallbackReason);
+
+        var (client4, handler4, _, _) = Create();
+        handler4.RespondWithJson(SquareDecisionResponse("r15c8"));
+        var range = await client4.ChooseSquareDecisionAsync("d1:latest", SquareContext(), SquareCandidates, CancellationToken.None);
+        Assert.Null(range.Row);
+        Assert.Contains("neplatne souradnice", range.FallbackReason);
+
+        var (client5, handler5, _, _) = Create();
+        handler5.RespondWithJson(SquareDecisionResponse("r7c"));
+        var noColumn = await client5.ChooseSquareDecisionAsync("d1:latest", SquareContext(), SquareCandidates, CancellationToken.None);
+        Assert.Null(noColumn.Col);
+        Assert.Contains("neplatne souradnice", noColumn.FallbackReason);
+
+        var (client6, handler6, _, _) = Create();
+        handler6.RespondWithJson(SquareDecisionResponse("x7c8"));
+        var badPrefix = await client6.ChooseSquareDecisionAsync("d1:latest", SquareContext(), SquareCandidates, CancellationToken.None);
+        Assert.Null(badPrefix.Row);
+        Assert.Contains("neplatne souradnice", badPrefix.FallbackReason);
+
+        var (client7, handler7, _, _) = Create();
+        handler7.RespondWithJson("{\"answers\":{\"pole\":{\"choice\":7}}}");
+        var numeric = await client7.ChooseSquareDecisionAsync("d1:latest", SquareContext(), SquareCandidates, CancellationToken.None);
+        Assert.Null(numeric.Row);
+        Assert.Contains("neplatne souradnice", numeric.FallbackReason);
+
+        var (client8, handler8, _, _) = Create();
+        handler8.RespondWithJson("not-json{{");
+        var invalid = await client8.ChooseSquareDecisionAsync("d1:latest", SquareContext(), SquareCandidates, CancellationToken.None);
+        Assert.Null(invalid.Row);
+        Assert.Contains("neplatne souradnice", invalid.FallbackReason);
+    }
+
+    [Fact]
+    public async Task SquareDecision_EmptyCandidates_FallsBackWithoutHttpCall()
+    {
+        var (client, handler, _, _) = Create();
+        var decision = await client.ChooseSquareDecisionAsync("d1:latest", SquareContext(), [], CancellationToken.None);
+        Assert.Null(decision.Row);
+        Assert.Null(decision.Col);
+        Assert.Contains("neplatne souradnice", decision.FallbackReason);
+        Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
+    public async Task SquareDecision_HttpErrors_ReportsSpecificReasons()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson("{\"error\":\"model is not a decision model\"}", HttpStatusCode.BadRequest);
+        var badRequest = await client.ChooseSquareDecisionAsync("qwen3.5:0.8b", SquareContext(), SquareCandidates, CancellationToken.None);
+        Assert.Null(badRequest.Row);
+        Assert.Contains("neumi decision rezim", badRequest.FallbackReason);
+
+        handler.RespondWithJson("{\"error\":\"model not found\"}", HttpStatusCode.NotFound);
+        var missingModel = await client.ChooseSquareDecisionAsync("invalid-model-zzz", SquareContext(), SquareCandidates, CancellationToken.None);
+        Assert.Null(missingModel.Row);
+        Assert.Contains("neni nainstalovany", missingModel.FallbackReason);
+
+        handler.RespondWithJson("{\"error\":\"boom\"}", HttpStatusCode.InternalServerError);
+        var serverError = await client.ChooseSquareDecisionAsync("d1:latest", SquareContext(), SquareCandidates, CancellationToken.None);
+        Assert.Null(serverError.Row);
+        Assert.Contains("HTTP 500", serverError.FallbackReason);
+    }
+
+    [Fact]
+    public async Task SquareDecision_ConnectionFailure_FallsBackWithConnectionReason()
+    {
+        var (client, handler, _, _) = Create();
+        handler.ThrowConnectionFailure = true;
+        var decision = await client.ChooseSquareDecisionAsync("d1:latest", SquareContext(), SquareCandidates, CancellationToken.None);
+        Assert.Null(decision.Row);
+        Assert.Null(decision.Col);
+        Assert.Contains("Spojeni s Ollamou selhalo", decision.FallbackReason);
+    }
+
+    [Fact]
+    public async Task SquareDecision_Timeout_FallsBackExactlyOnce()
+    {
+        var (client, handler, _, _) = Create(new OllamaOptions { MoveTimeoutSeconds = 0.01 });
+        handler.Blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var decision = await client.ChooseSquareDecisionAsync("d1:latest", SquareContext(), SquareCandidates, CancellationToken.None);
+        Assert.Null(decision.Row);
+        Assert.Contains("neodpovedel vcas", decision.FallbackReason);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task SquareDecision_CallerCancellation_Propagates()
+    {
+        var (client, handler, _, _) = Create();
+        handler.Blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cts = new CancellationTokenSource();
+        var pending = client.ChooseSquareDecisionAsync("d1:latest", SquareContext(), SquareCandidates, cts.Token);
+        Assert.False(pending.IsCompleted);
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+    }
 }

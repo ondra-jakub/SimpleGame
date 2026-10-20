@@ -117,13 +117,18 @@ public sealed class PiskvorkyEngine(SessionStore sessions, IGameRandom random, I
 
     private async Task<PiskvorkyMoveInfo> ModelMoveAsync(PiskvorkyState current, string model, CancellationToken token)
     {
+        // Decision-only models (no chat capability) answer through the decision protocol.
+        var useDecision = await UsesDecisionProtocolAsync(model, token);
+        var candidates = useDecision ? DecisionCandidates(current.Board, current.Current) : [];
         var feedback = (string?)null;
         var lastReason = (string?)null;
         for (var attempt = 1; attempt <= MaxAttempts; attempt++)
         {
             var context = new PiskvorkyContext(Size, current.Current, BoardText(current.Board), current.MoveNumber + 1,
                 current.LastMoveInfo?.Position, feedback);
-            var decision = await ollama.ChooseSquareAsync(model, context, token);
+            var decision = useDecision
+                ? await ollama.ChooseSquareDecisionAsync(model, context, candidates, token)
+                : await ollama.ChooseSquareAsync(model, context, token);
             token.ThrowIfCancellationRequested();
             if (decision.Row is int row && decision.Col is int col)
             {
@@ -140,6 +145,47 @@ public sealed class PiskvorkyEngine(SessionStore sessions, IGameRandom random, I
             }
         }
         return new PiskvorkyMoveInfo(current.Current, Heuristic(current.Board, current.Current), "heuristic", model, lastReason);
+    }
+
+    private async Task<bool> UsesDecisionProtocolAsync(string model, CancellationToken token)
+    {
+        // Unavailable catalog falls back to the chat protocol, which reports its own failure reason.
+        var models = await ollama.GetModelsAsync(false, token);
+        token.ThrowIfCancellationRequested();
+        var info = models.Models.FirstOrDefault(m => m.Name == model);
+        return info is not null && info.Supports("decision") && !info.Supports("completion");
+    }
+
+    // Candidate squares offered to decision models: any answer is a legal move.
+    private List<(int Row, int Col, string Description)> DecisionCandidates(string board, string player)
+    {
+        var symbol = player[0];
+        var opponent = symbol == 'X' ? 'O' : 'X';
+        var result = new List<(int Row, int Col, string Description)>();
+        var hasStones = false;
+        for (var i = 0; i < Squares; i++)
+        {
+            if (board[i] != '.')
+            {
+                hasStones = true;
+                continue;
+            }
+            if (!HasNeighbor(board, i)) continue;
+            var row = i / Size;
+            var col = i % Size;
+            var description = CompletesFive(board, row, col, symbol) ? "volné pole, které dokončí tvou pětku a vyhraješ"
+                : CompletesFive(board, row, col, opponent) ? "volné pole, které zablokuje soupeřovu pětku"
+                : "volné pole sousedící s kameny";
+            result.Add((row, col, $"řádek {row}, sloupec {col}: {description}"));
+        }
+        if (result.Count > 0) return result;
+        // Degenerate boards: offer the center on an empty board, otherwise the first free square.
+        var square = hasStones ? board.IndexOf('.') : Size / 2 * Size + Size / 2;
+        var fallbackRow = square / Size;
+        var fallbackCol = square % Size;
+        result.Add((fallbackRow, fallbackCol,
+            $"řádek {fallbackRow}, sloupec {fallbackCol}: {(hasStones ? "volné pole" : "střed desky (první tah)")}"));
+        return result;
     }
 
     private static PiskvorkyState Apply(PiskvorkyState current, PiskvorkyMoveInfo move)
@@ -231,6 +277,11 @@ public sealed class PiskvorkyEngine(SessionStore sessions, IGameRandom random, I
         return candidates[random.Next(0, candidates.Count)];
     }
 
+    private static bool CompletesFive(string board, int row, int col, char symbol) =>
+        Directions.Any(direction =>
+            1 + CountLine(board, row, col, direction.Row, direction.Col, symbol)
+              + CountLine(board, row, col, -direction.Row, -direction.Col, symbol) >= WinLength);
+
     private static bool FindCompleting(string board, char symbol, out int square)
     {
         for (var i = 0; i < Squares; i++)
@@ -238,13 +289,10 @@ public sealed class PiskvorkyEngine(SessionStore sessions, IGameRandom random, I
             if (board[i] != '.') continue;
             var row = i / Size;
             var col = i % Size;
-            foreach (var (dRow, dCol) in Directions)
+            if (CompletesFive(board, row, col, symbol))
             {
-                if (1 + CountLine(board, row, col, dRow, dCol, symbol) + CountLine(board, row, col, -dRow, -dCol, symbol) >= WinLength)
-                {
-                    square = i;
-                    return true;
-                }
+                square = i;
+                return true;
             }
         }
         square = -1;

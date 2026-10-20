@@ -202,5 +202,8 @@ public sealed class ApiTests
             throw new InvalidOperationException("A classic game must not call Ollama.");
         public Task<PiskvorkyDecision> ChooseSquareAsync(string model, PiskvorkyContext context, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("A classic game must not call Ollama.");
+        public Task<PiskvorkyDecision> ChooseSquareDecisionAsync(string model, PiskvorkyContext context,
+            IReadOnlyList<(int Row, int Col, string Description)> candidates, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A classic game must not call Ollama.");
     }
 }

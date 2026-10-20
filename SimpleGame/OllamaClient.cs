@@ -67,6 +67,8 @@ public interface IOllamaClient
     Task<ModelsView> GetModelsAsync(bool refresh, CancellationToken cancellationToken);
     Task<OpponentDecision> ChooseDecisionMoveAsync(string model, OpponentContext context, CancellationToken cancellationToken);
     Task<PiskvorkyDecision> ChooseSquareAsync(string model, PiskvorkyContext context, CancellationToken cancellationToken);
+    Task<PiskvorkyDecision> ChooseSquareDecisionAsync(string model, PiskvorkyContext context,
+        IReadOnlyList<(int Row, int Col, string Description)> candidates, CancellationToken cancellationToken);
 }
 
 public sealed class ModelCatalogCache
@@ -238,6 +240,91 @@ public sealed class OllamaClient(HttpClient http, IOptions<OllamaOptions> option
                     : "Model vratil neplatne souradnice; tah prevzala zalozni heuristika.";
             return new PiskvorkyDecision(null, null, reason);
         }
+    }
+
+    public async Task<PiskvorkyDecision> ChooseSquareDecisionAsync(string model, PiskvorkyContext context,
+        IReadOnlyList<(int Row, int Col, string Description)> candidates, CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(options.Value.MoveTimeoutSeconds));
+        try
+        {
+            var body = BuildSquareDecisionRequest(model, context, candidates);
+            using var response = await http.PostAsJsonAsync("v1/systemone", body, JsonOptions, timeout.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                var status = response.StatusCode;
+                var reason = status switch
+                {
+                    HttpStatusCode.BadRequest => "Model neumi decision rezim; tah prevzala zalozni heuristika.",
+                    HttpStatusCode.NotFound => "Model neni nainstalovany v Ollame; tah prevzala zalozni heuristika.",
+                    _ => $"Ollama odmitla pozadavek (HTTP {(int)status}); tah prevzala zalozni heuristika."
+                };
+                logger.LogWarning("Ollama square decision request failed for {Model} with status {Status}.", model, (int)status);
+                return new PiskvorkyDecision(null, null, reason);
+            }
+            using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(timeout.Token), cancellationToken: timeout.Token);
+            var (row, col) = ParseSquareDecision(json.RootElement, context);
+            cancellationToken.ThrowIfCancellationRequested();
+            return new PiskvorkyDecision(row, col);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning("Ollama square decision timed out for {Model}.", model);
+            return new PiskvorkyDecision(null, null, "Model neodpovedel vcas; tah prevzala zalozni heuristika.");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException or KeyNotFoundException or IOException or FormatException)
+        {
+            logger.LogWarning(ex, "Ollama square decision failed for {Model}.", model);
+            var reason = ex is HttpRequestException or IOException
+                ? "Spojeni s Ollamou selhalo; tah prevzala zalozni heuristika."
+                : "Model vratil neplatne souradnice; tah prevzala zalozni heuristika.";
+            return new PiskvorkyDecision(null, null, reason);
+        }
+    }
+
+    private object BuildSquareDecisionRequest(string model, PiskvorkyContext context,
+        IReadOnlyList<(int Row, int Col, string Description)> candidates)
+    {
+        if (candidates.Count == 0) throw new JsonException("No candidate squares for the decision question.");
+        var criteria = new Dictionary<string, string>(candidates.Count);
+        foreach (var (row, col, description) in candidates)
+            criteria[$"r{row}c{col}"] = description;
+        return new
+        {
+            model,
+            stream = false,
+            keep_alive = options.Value.KeepAlive,
+            state = context,
+            questions = new
+            {
+                pole = new
+                {
+                    type = "choice",
+                    instructions = "Vyber jedno volné pole ze seznamu, na které zahraješ svůj kámen. " +
+                        "Každé kritérium popisuje jedno volné pole. Dej přednost poli, které " +
+                        "dokončí tvou pětku, nebo zablokuje soupeřovu pětku.",
+                    criteria
+                }
+            }
+        };
+    }
+
+    private static (int Row, int Col) ParseSquareDecision(JsonElement root, PiskvorkyContext context)
+    {
+        var max = context.Size - 1;
+        if (!root.TryGetProperty("answers", out var answers) || answers.ValueKind != JsonValueKind.Object)
+            throw new JsonException("Missing answers.");
+        if (!answers.TryGetProperty("pole", out var pole) || pole.ValueKind != JsonValueKind.Object)
+            throw new JsonException("Missing answers.pole.");
+        var key = pole.GetProperty("choice").GetString();
+        var separator = key is null ? -1 : key.IndexOf('c');
+        if (key is null || key.Length < 3 || key[0] != 'r' || separator < 1
+            || !int.TryParse(key.AsSpan(1, separator - 1), out var row)
+            || !int.TryParse(key.AsSpan(separator + 1), out var col)
+            || row < 0 || row > max || col < 0 || col > max)
+            throw new JsonException("Invalid answers.pole.choice.");
+        return (row, col);
     }
 
     private object BuildDecisionRequest(string model, OpponentContext context)

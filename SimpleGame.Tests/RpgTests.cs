@@ -82,6 +82,9 @@ public sealed class RpgTests
 
         public Task<PiskvorkyDecision> ChooseSquareAsync(string model, PiskvorkyContext context, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("RPG tests must not play piskvorky.");
+        public Task<PiskvorkyDecision> ChooseSquareDecisionAsync(string model, PiskvorkyContext context,
+            IReadOnlyList<(int Row, int Col, string Description)> candidates, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("RPG tests must not play piskvorky.");
     }
 
     private sealed class OtherSession : GameSession { }

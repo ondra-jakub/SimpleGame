@@ -45,15 +45,24 @@ public sealed class PiskvorkyTests
     {
         public ModelsView Models { get; set; } = new(true, [new ModelInfo("llama3", 42)]);
         private readonly Queue<PiskvorkyDecision> decisions = new();
+        private readonly Queue<PiskvorkyDecision> squareDecisions = new();
         public TaskCompletionSource<PiskvorkyDecision>? Blocker { get; set; }
         public int ModelsCalls { get; private set; }
         public int ChooseCalls { get; private set; }
+        public int DecisionSquareCalls { get; private set; }
         public List<PiskvorkyContext> Contexts { get; } = [];
+        public List<IReadOnlyList<(int Row, int Col, string Description)>> CandidateSquares { get; } = [];
         public List<CancellationToken> Tokens { get; } = [];
 
         public FakeOllama Decisions(params PiskvorkyDecision[] values)
         {
             foreach (var value in values) decisions.Enqueue(value);
+            return this;
+        }
+
+        public FakeOllama SquareDecisions(params PiskvorkyDecision[] values)
+        {
+            foreach (var value in values) squareDecisions.Enqueue(value);
             return this;
         }
 
@@ -70,6 +79,18 @@ public sealed class PiskvorkyTests
             Tokens.Add(cancellationToken);
             return Blocker is null
                 ? Task.FromResult(decisions.Count > 0 ? decisions.Dequeue() : new PiskvorkyDecision(7, 7))
+                : Blocker.Task.WaitAsync(cancellationToken);
+        }
+
+        public Task<PiskvorkyDecision> ChooseSquareDecisionAsync(string model, PiskvorkyContext context,
+            IReadOnlyList<(int Row, int Col, string Description)> candidates, CancellationToken cancellationToken)
+        {
+            DecisionSquareCalls++;
+            Contexts.Add(context);
+            CandidateSquares.Add(candidates);
+            Tokens.Add(cancellationToken);
+            return Blocker is null
+                ? Task.FromResult(squareDecisions.Count > 0 ? squareDecisions.Dequeue() : new PiskvorkyDecision(7, 7))
                 : Blocker.Task.WaitAsync(cancellationToken);
         }
 
@@ -462,6 +483,121 @@ public sealed class PiskvorkyTests
         Assert.Equal(new PiskvorkyMoveInfo("O", 16, "llm", "llama3", null), view.LastMove);
         Assert.Equal(2, ollama.ChooseCalls);
         Assert.Equal("X", view.Current);
+    }
+
+    private static ModelsView DecisionModels => new(true, [new ModelInfo("d1:latest", 3730544597, ["decision", "vision"])]);
+
+    [Fact]
+    public async Task Move_DecisionCapableModel_RoutesToDecisionProtocol()
+    {
+        var (engine, _, ollama, _, _) = Create();
+        ollama.Models = DecisionModels;
+        var start = await Start(engine, xModel: "d1:latest");
+        ollama.SquareDecisions(new PiskvorkyDecision(7, 8));
+        var view = await Move(engine, start.Id, null, 0);
+
+        Assert.Equal(1, ollama.DecisionSquareCalls);
+        Assert.Equal(0, ollama.ChooseCalls);
+        Assert.Equal(new PiskvorkyMoveInfo("X", 7 * 15 + 8, "llm", "d1:latest", null), view.LastMove);
+        Assert.Equal('X', view.Board[113]);
+        Assert.Equal("O", view.Current);
+        // Empty board offers only the center square.
+        var (row, col, description) = Assert.Single(ollama.CandidateSquares[0]);
+        Assert.Equal(7, row);
+        Assert.Equal(7, col);
+        Assert.Contains("střed desky", description);
+    }
+
+    [Fact]
+    public async Task Move_DecisionModelOccupiedSquare_RetriesWithAttemptFeedback()
+    {
+        var (engine, _, ollama, _, _) = Create();
+        ollama.Models = DecisionModels;
+        var start = await Start(engine, oModel: "d1:latest");
+        await Move(engine, start.Id, 112, 0);
+        ollama.SquareDecisions(new PiskvorkyDecision(7, 7), new PiskvorkyDecision(8, 8));
+
+        var view = await Move(engine, start.Id, null, 1);
+
+        Assert.Equal(2, ollama.DecisionSquareCalls);
+        Assert.Equal(0, ollama.ChooseCalls);
+        Assert.Null(ollama.Contexts[0].AttemptFeedback);
+        Assert.Contains("obsazene", ollama.Contexts[1].AttemptFeedback);
+        Assert.Equal(new PiskvorkyMoveInfo("O", 8 * 15 + 8, "llm", "d1:latest", null), view.LastMove);
+        // Candidates are free neighbours of the stone, so the occupied centre is never offered.
+        var candidates = ollama.CandidateSquares[0];
+        Assert.DoesNotContain(candidates, c => c.Row == 7 && c.Col == 7);
+        Assert.All(candidates, c => Assert.Contains("soused", c.Description));
+    }
+
+    [Fact]
+    public async Task Move_DecisionCandidates_DescribeWinningAndBlockingSquares()
+    {
+        var (engine, _, ollama, _, _) = Create();
+        ollama.Models = DecisionModels;
+        var start = await Start(engine, oModel: "d1:latest");
+        // X builds four in row 0 (threat at (0,4)); O plays its model moves far away.
+        ollama.SquareDecisions(new PiskvorkyDecision(10, 10), new PiskvorkyDecision(11, 11), new PiskvorkyDecision(12, 12));
+
+        var view = await PlayAll(engine, start.Id, 0, null, 1, null, 2, null, 3, null);
+
+        Assert.Equal("playing", view.Status);
+        var candidates = ollama.CandidateSquares[^1];
+        Assert.Contains(candidates, c => c.Row == 0 && c.Col == 4 && c.Description.Contains("zablokuje"));
+        Assert.DoesNotContain(candidates, c => c.Row == 0 && c.Col == 8);
+        // O's own stones offered neither a win nor a block.
+        Assert.DoesNotContain(candidates, c => c.Description.Contains("dokončí"));
+    }
+
+    [Fact]
+    public async Task Move_ThreeFailedDecisionAttempts_FallsBackToHeuristicWithReason()
+    {
+        var (engine, _, ollama, _, _) = Create();
+        ollama.Models = DecisionModels;
+        var start = await Start(engine, xModel: "d1:latest");
+        var reason = "Model neumi decision rezim; tah prevzala zalozni heuristika.";
+        ollama.SquareDecisions(
+            new PiskvorkyDecision(null, null, reason),
+            new PiskvorkyDecision(null, null, reason),
+            new PiskvorkyDecision(null, null, reason));
+
+        var view = await Move(engine, start.Id, null, 0);
+
+        Assert.Equal(3, ollama.DecisionSquareCalls);
+        Assert.Equal(0, ollama.ChooseCalls);
+        Assert.Equal(reason, ollama.Contexts[1].AttemptFeedback);
+        Assert.Equal(new PiskvorkyMoveInfo("X", 112, "heuristic", "d1:latest", reason), view.LastMove);
+    }
+
+    [Fact]
+    public async Task Move_CatalogUnavailableAtMove_FallsBackToChatProtocol()
+    {
+        var (engine, _, ollama, _, _) = Create();
+        ollama.Models = DecisionModels;
+        var start = await Start(engine, xModel: "d1:latest");
+        ollama.Models = new ModelsView(false, [], "Ollama neni dostupna.");
+        ollama.Decisions(new PiskvorkyDecision(7, 7));
+
+        var view = await Move(engine, start.Id, null, 0);
+
+        Assert.Equal(1, ollama.ChooseCalls);
+        Assert.Equal(0, ollama.DecisionSquareCalls);
+        Assert.Equal("llm", view.LastMove!.Source);
+    }
+
+    [Fact]
+    public async Task Move_ModelWithChatAndDecisionCapabilities_PlaysOverChat()
+    {
+        var (engine, _, ollama, _, _) = Create();
+        ollama.Models = new ModelsView(true, [new ModelInfo("hybrid", 37, ["completion", "decision"])]);
+        var start = await Start(engine, xModel: "hybrid");
+        ollama.Decisions(new PiskvorkyDecision(7, 7));
+
+        var view = await Move(engine, start.Id, null, 0);
+
+        Assert.Equal(1, ollama.ChooseCalls);
+        Assert.Equal(0, ollama.DecisionSquareCalls);
+        Assert.Equal("llm", view.LastMove!.Source);
     }
 
     [Fact]
