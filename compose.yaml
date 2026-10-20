@@ -4,4 +4,8 @@
     build:
       context: .
       dockerfile: SimpleGame/Dockerfile
-
+    ports:
+      - "5183:8080"
+    environment:
+      ASPNETCORE_HTTP_PORTS: "8080"
+      Ollama__BaseUrl: "${OLLAMA_BASE_URL:-http://host.docker.internal:11434}"

@@ -1,0 +1,177 @@
+.rpg-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.rpg-setup {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  position: sticky;
+  top: 1rem;
+}
+
+.rpg-setup select {
+  width: 100%;
+  min-width: 0;
+}
+
+.battle-panel {
+  overflow-wrap: anywhere;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.battle-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.hp-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.hp-row {
+  display: grid;
+  grid-template-columns: 4.2rem minmax(0, 1fr) 4.6rem;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.hp-name {
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+}
+
+.hp-bar {
+  height: 0.9rem;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--paper-2);
+  overflow: hidden;
+}
+
+.hp-fill {
+  height: 100%;
+  transition: width 300ms ease;
+}
+
+.hp-player {
+  background: linear-gradient(180deg, #3c7a55, var(--green));
+}
+
+.hp-opponent {
+  background: linear-gradient(180deg, #c05732, var(--accent-ink));
+}
+
+.hp-value {
+  font-size: 0.85rem;
+  text-align: right;
+  color: var(--ink-2);
+}
+
+.cooldown-note {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+
+.taunt {
+  margin: 0;
+  border-left: 4px solid var(--accent);
+  background: var(--amber-soft);
+  border-radius: 0 8px 8px 0;
+  padding: 0.55rem 0.9rem;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 1.05rem;
+}
+
+.taunt footer {
+  margin-top: 0.2rem;
+  font-size: 0.8rem;
+  font-style: normal;
+  color: var(--ink-2);
+}
+
+.actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.btn-action {
+  min-width: 8.5rem;
+}
+
+.cooldown {
+  margin-left: 0.3rem;
+}
+
+.thinking {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--ink-2);
+}
+
+.thinking::after {
+  content: '…';
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.battle-log {
+  border-top: 1.5px solid var(--line);
+  padding-top: 0.7rem;
+}
+
+.log-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: var(--ink-2);
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.models-note {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+}
+
+.models-warning {
+  color: var(--amber);
+  font-weight: 600;
+}
+
+@media (max-width: 860px) {
+  .rpg-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .rpg-setup {
+    position: static;
+    order: -1;
+  }
+}

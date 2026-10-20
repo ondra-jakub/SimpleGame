@@ -17,6 +17,13 @@
 **/docker-compose*
 **/Dockerfile*
 **/node_modules
+**/dist
+**/.angular
+**/coverage
+**/TestResults
+**/test-results
+**/playwright-report
+**/docs
 **/npm-debug.log
 **/obj
 **/secrets.dev.yaml

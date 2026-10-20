@@ -1,0 +1,306 @@
+<article class="game">
+  <header class="game-head">
+    <p class="game-kicker">Hra pátá</p>
+    <h2 class="game-title">Souboj arén</h2>
+    <p class="game-lede">
+      Klasický RPG souboj: útok, speciální útok s cooldownem a léčení. Protivníkem může být klasická
+      AI, nebo model z Ollamy, který vymýšlí tahy i průpovídky.
+    </p>
+  </header>
+
+  <div class="rpg-layout">
+    <section class="rpg-arena" [attr.aria-busy]="pending()">
+      @if (error(); as err) {
+        <div class="banner banner-error" role="alert">
+          <p>{{ err.message }}</p>
+          <div class="banner-actions">
+            @if (view(); as v) {
+              <button
+                type="button"
+                class="btn btn-recover"
+                (click)="refreshBattle()"
+                [disabled]="pending()"
+              >
+                Obnovit stav
+              </button>
+            }
+            <button
+              type="button"
+              class="btn btn-restart"
+              (click)="startBattle()"
+              [disabled]="pending() || !!view()?.inProgress"
+            >
+              Nový souboj
+            </button>
+          </div>
+          <p class="banner-note">Akce se automaticky neopakuje. Stav obnovíte tlačítkem.</p>
+        </div>
+      }
+
+      @if (!view()) {
+        <div class="panel start-panel">
+          <h3 class="panel-title">Aréna čeká</h3>
+          <p class="hint">
+            Vyberte protivníka vpravo a vydejte se do souboje. Vytvoření souboje trvá jen okamžik.
+          </p>
+          <button
+            type="button"
+            class="btn btn-accent btn-restart"
+            (click)="startBattle()"
+            [disabled]="pending()"
+          >
+            Nový souboj
+          </button>
+          @if (pending()) {
+            <p class="busy-hint" role="status">Vstupuji do arény…</p>
+          }
+        </div>
+      } @else if (view(); as v) {
+        <div class="panel battle-panel" [attr.data-session-id]="v.id">
+          <header class="battle-head">
+            <h3 class="panel-title">
+              Souboj s <strong>{{ opponentLabel(v) }}</strong>
+            </h3>
+            <div class="status-row">
+              <span class="chip chip-strong">Kolo {{ v.round }}</span>
+              <span class="chip">Vy: {{ v.playerHp }} HP · Soupeř: {{ v.opponentHp }} HP</span>
+            </div>
+          </header>
+
+          @if (v.status === 'won' || v.status === 'lost') {
+            <div
+              class="banner"
+              role="status"
+              [class.banner-success]="v.status === 'won'"
+              [class.banner-error]="v.status === 'lost'"
+            >
+              <h3 class="banner-title">
+                @if (v.status === 'won') {
+                  Vítězství!
+                } @else {
+                  Porážka…
+                }
+              </h3>
+              <p>
+                @if (v.status === 'won') {
+                  Soupeř s {{ opponentLabel(v) }} padl k zemi. Aréna jásá.
+                } @else {
+                  {{ opponentLabel(v) }} vás porazil. Aréna šumí, ale vrátíte se.
+                }
+              </p>
+            </div>
+          }
+
+          <div class="hp-block">
+            <div class="hp-row">
+              <span class="hp-name">Vy</span>
+              <div
+                class="hp-bar"
+                role="img"
+                [attr.aria-label]="'Vaše zdraví: ' + v.playerHp + ' ze 100'"
+              >
+                <div class="hp-fill hp-player" [style.width.%]="v.playerHp"></div>
+              </div>
+              <span class="hp-value mono">{{ v.playerHp }}/100</span>
+            </div>
+            <div class="hp-row">
+              <span class="hp-name">Soupeř</span>
+              <div
+                class="hp-bar"
+                role="img"
+                [attr.aria-label]="'Soupeřovo zdraví: ' + v.opponentHp + ' ze 100'"
+              >
+                <div class="hp-fill hp-opponent" [style.width.%]="v.opponentHp"></div>
+              </div>
+              <span class="hp-value mono">{{ v.opponentHp }}/100</span>
+            </div>
+            @if (v.playerCooldown > 0) {
+              <p class="cooldown-note">Speciální útok dostupný za {{ v.playerCooldown }} kola.</p>
+            }
+          </div>
+
+          @if (fallbackMove(); as fallback) {
+            <div class="banner banner-warn" role="status">
+              <h3 class="banner-title">Tah převzala záložní klasická AI</h3>
+              <p>
+                Model {{ v.model }} nedokončil platný tah
+                @if (fallback.fallbackReason; as reason) {
+                  ({{ reason }})
+                }
+                a o tahu rozhodla záložní heuristika. Není to tah modelu.
+              </p>
+            </div>
+          }
+
+          @if (v.lastOpponentMove?.taunt; as taunt) {
+            <blockquote class="taunt">
+              „{{ taunt }}“
+              <footer>{{ opponentLabel(v) }}</footer>
+            </blockquote>
+          }
+
+          @if (v.status === 'playing') {
+            <div class="actions">
+              <button
+                type="button"
+                class="btn btn-action btn-attack"
+                (click)="act('attack')"
+                [disabled]="!canAct('attack')"
+              >
+                {{ actionLabel('attack') }}
+                <span class="sr-only">– způsobí 10 až 18 poškození</span>
+              </button>
+              <button
+                type="button"
+                class="btn btn-action btn-special"
+                (click)="act('special')"
+                [disabled]="!canAct('special')"
+                [attr.title]="
+                  v.playerCooldown > 0
+                    ? 'Dostupné za ' + v.playerCooldown + ' kola'
+                    : 'Silný útok, může minout'
+                "
+              >
+                {{ actionLabel('special') }}
+                @if (v.playerCooldown > 0) {
+                  <span class="cooldown mono">({{ v.playerCooldown }})</span>
+                }
+                <span class="sr-only">– 20 až 30 poškození, může minout</span>
+              </button>
+              <button
+                type="button"
+                class="btn btn-action btn-heal"
+                (click)="act('heal')"
+                [disabled]="!canAct('heal')"
+              >
+                {{ actionLabel('heal') }}
+                <span class="sr-only">– doplní 15 až 25 zdraví</span>
+              </button>
+            </div>
+            @if (pending() || v.inProgress) {
+              <p class="thinking" role="status">Protivník přemýšlí…</p>
+            }
+            @if (v.inProgress) {
+              <button
+                type="button"
+                class="btn btn-recover"
+                (click)="refreshBattle()"
+                [disabled]="pending()"
+              >
+                Obnovit stav
+              </button>
+            }
+            <div class="restart-row">
+              <button
+                type="button"
+                class="btn btn-restart"
+                (click)="startBattle()"
+                [disabled]="pending() || v.inProgress"
+              >
+                Nový souboj
+              </button>
+            </div>
+          } @else {
+            <div class="restart-row">
+              <button
+                type="button"
+                class="btn btn-accent btn-restart"
+                (click)="startBattle()"
+                [disabled]="pending()"
+              >
+                Nový souboj
+              </button>
+            </div>
+          }
+
+          @if (v.log.length > 0) {
+            <div class="battle-log">
+              <h4 class="panel-title">Průběh souboje</h4>
+              <ul class="log-list">
+                @for (line of reversedLog(); track $index) {
+                  <li class="mono">{{ line }}</li>
+                }
+              </ul>
+            </div>
+          }
+        </div>
+      }
+    </section>
+
+    <aside class="panel rpg-setup" aria-label="Nastavení protivníka">
+      <h3 class="panel-title">Protivník pro další souboj</h3>
+      <label class="field-label" for="model-select">Vyberte protivníka</label>
+      <select
+        id="model-select"
+        class="field"
+        [disabled]="modelsStatus() === 'loading'"
+        [ngModel]="selectedModel()"
+        (ngModelChange)="selectedModel.set($event)"
+      >
+        <option [value]="classicValue">Klasická AI (bez modelu)</option>
+        @if (selectedModelMissing()) {
+          <option [value]="selectedModel()">{{ selectedModel() }} (nyní nedostupný)</option>
+        }
+        @for (model of models(); track model.name) {
+          <option [value]="model.name">{{ model.name }} ({{ formatSize(model.sizeBytes) }})</option>
+        }
+      </select>
+
+      @switch (modelsStatus()) {
+        @case ('loading') {
+          <p class="models-note" role="status">Načítám seznam modelů…</p>
+        }
+        @case ('ready') {
+          @if (models().length === 0) {
+            <div class="banner banner-info" role="status">
+              <p>
+                Ollama běží, ale nemá nainstalované žádné modely. K dispozici je klasická AI. Modely
+                nainstalujte v Ollamě a seznam obnovte.
+              </p>
+            </div>
+          } @else {
+            <p class="models-note">
+              Vybráno pro příští souboj: <strong>{{ selectedLabel() }}</strong
+              >.
+            </p>
+          }
+        }
+        @case ('unavailable') {
+          <div class="banner banner-warn" role="status">
+            <p>
+              Ollama není dostupná
+              @if (modelsMessage(); as message) {
+                – {{ message }}
+              }
+              . Souboj lze vést s klasickou AI.
+            </p>
+          </div>
+        }
+      }
+
+      @if (modelWarning()) {
+        <p class="models-note models-warning">
+          Pozor: první tah s modelem může trvat déle – Ollama nahrává model do paměti.
+        </p>
+      }
+      @if (selectedModelMissing()) {
+        <p class="models-note models-warning">
+          Vybraný model nyní není v seznamu. Obnovte modely nebo výslovně zvolte klasickou AI.
+        </p>
+      }
+
+      <button
+        type="button"
+        class="btn btn-refresh"
+        (click)="loadModels()"
+        [disabled]="modelsPending()"
+      >
+        Obnovit modely
+      </button>
+      <p class="hint">
+        Výběr platí pro příští souboj; probíhající souboj vždy ukazuje svého skutečného protivníka v
+        záhlaví.
+      </p>
+    </aside>
+  </div>
+</article>

@@ -1,0 +1,148 @@
+<article class="game">
+  <header class="game-head">
+    <p class="game-kicker">Hra třetí</p>
+    <h2 class="game-title">Hádej slovo</h2>
+    <p class="game-lede">
+      České slovo bez diakritiky, pět písmen, šest pokusů. Tip může být libovolná pětice písmen.
+      Barvy i symboly prozradí, co se kam hodí.
+    </p>
+  </header>
+
+  @if (error(); as err) {
+    <div class="banner banner-error" role="alert">
+      <p>{{ err.message }}</p>
+      @if (err.status === 404) {
+        <p class="banner-note">Hra vypršela nebo server restartoval. Začněte novou hru.</p>
+      }
+    </div>
+  }
+
+  @if (!view()) {
+    <div class="panel start-panel">
+      <button
+        type="button"
+        class="btn btn-accent btn-start"
+        (click)="start()"
+        [disabled]="pending()"
+      >
+        Začít hru
+      </button>
+      @if (pending()) {
+        <p class="busy-hint" role="status">Losuji slovo…</p>
+      }
+    </div>
+  } @else if (view(); as v) {
+    <section class="word-board" [attr.aria-busy]="pending()">
+      <div class="status-row">
+        <span class="chip">Slovo má {{ v.length }} písmen</span>
+        <span class="chip chip-strong">Pokusy: {{ v.guesses.length }} / {{ v.maxAttempts }}</span>
+        @if (pending()) {
+          <span class="chip chip-busy" role="status">Zpracovávám tip…</span>
+        }
+      </div>
+
+      @if (v.status === 'won') {
+        <div class="banner banner-success" role="status">
+          <h3 class="banner-title">Slovo uhodnuto!</h3>
+          <p>
+            Tajné slovo bylo <strong>{{ v.secret }}</strong
+            >.
+          </p>
+        </div>
+      }
+      @if (v.status === 'lost') {
+        <div class="banner banner-error" role="status">
+          <h3 class="banner-title">Šest pokusů je vyčerpáno</h3>
+          <p>
+            Tajné slovo bylo <strong>{{ v.secret }}</strong
+            >.
+          </p>
+        </div>
+      }
+
+      <p class="sr-only" aria-live="polite">{{ lastFeedbackSummary() }}</p>
+
+      <div
+        class="grid"
+        role="grid"
+        [style.--word-length]="v.length"
+        aria-label="Mřížka tipů: řádky odpovídají pokusům, sloupce písmenům"
+      >
+        @for (row of rows(); track $index) {
+          <div class="grid-row" role="row">
+            @for (cell of row; track $index) {
+              @if (cell.letter; as letter) {
+                <span
+                  class="cell mono"
+                  role="gridcell"
+                  [class.cell-correct]="cell.feedback === 'correct'"
+                  [class.cell-present]="cell.feedback === 'present'"
+                  [class.cell-absent]="cell.feedback === 'absent'"
+                  [class.cell-draft]="cell.feedback === null"
+                  [attr.aria-label]="
+                    cell.feedback ? letter + ' – ' + getFeedbackText(cell.feedback) : letter
+                  "
+                  >{{ letter
+                  }}<span class="cell-mark" aria-hidden="true">{{
+                    cell.feedback === 'correct'
+                      ? '●'
+                      : cell.feedback === 'present'
+                        ? '◐'
+                        : cell.feedback === 'absent'
+                          ? '○'
+                          : ''
+                  }}</span></span
+                >
+              } @else {
+                <span class="cell cell-empty" role="gridcell"></span>
+              }
+            }
+          </div>
+        }
+      </div>
+
+      <div class="legend" aria-hidden="true">
+        <span class="legend-item"><span class="mark mono">●</span> správné místo</span>
+        <span class="legend-item"><span class="mark mono">◐</span> jinde ve slově</span>
+        <span class="legend-item"><span class="mark mono">○</span> není ve slově</span>
+      </div>
+
+      @if (v.status === 'playing') {
+        <form class="word-form" (submit)="submitGuess(); $event.preventDefault()">
+          <label class="sr-only" for="word-input">Váš tip (pět písmen)</label>
+          <input
+            id="word-input"
+            class="field word-input mono"
+            type="text"
+            inputmode="latin"
+            autocomplete="off"
+            spellcheck="false"
+            maxlength="10"
+            placeholder="PISMO"
+            [value]="draft()"
+            (input)="onDraftInput($event)"
+            [disabled]="pending()"
+          />
+          <button type="submit" class="btn btn-accent btn-submit" [disabled]="pending()">
+            Tipnout
+          </button>
+          <button type="button" class="btn btn-restart" (click)="start()" [disabled]="pending()">
+            Nová hra
+          </button>
+        </form>
+        @if (formError(); as fe) {
+          <p class="field-error" role="alert">{{ fe }}</p>
+        }
+      } @else {
+        <button
+          type="button"
+          class="btn btn-accent btn-restart"
+          (click)="start()"
+          [disabled]="pending()"
+        >
+          Hrát znovu
+        </button>
+      }
+    </section>
+  }
+</article>

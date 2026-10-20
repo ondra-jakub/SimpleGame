@@ -1,0 +1,77 @@
+<div class="shell">
+  <header class="masthead">
+    <p class="masthead-kicker">SALON JEDNODUCHÝCH HER · VÝROČNÍ ČÍSLO V</p>
+    <h1 class="masthead-title">Papírová arkáda</h1>
+    <p class="masthead-sub">
+      Pět her proti serveru: hádané číslo, šibenice, slovo, dvacet otázek a souboj s protivníkem z
+      Ollamy. Vše česky, vše na jednom místě.
+    </p>
+    <p class="asterism" aria-hidden="true">⁂</p>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Volba hry" (keydown)="onTablistKeydown($event)">
+    @for (tab of tabs; track tab.id) {
+      <button
+        type="button"
+        class="tab"
+        role="tab"
+        [id]="'tab-' + tab.id"
+        [attr.aria-selected]="activeTab() === tab.id"
+        [attr.aria-controls]="'panel-' + tab.id"
+        [class.is-active]="activeTab() === tab.id"
+        (click)="selectTab(tab.id)"
+      >
+        {{ tab.label }}
+      </button>
+    }
+  </nav>
+
+  <main class="stage">
+    <section
+      role="tabpanel"
+      id="panel-number"
+      [attr.aria-labelledby]="'tab-number'"
+      [hidden]="activeTab() !== 'number'"
+    >
+      <app-number-game />
+    </section>
+    <section
+      role="tabpanel"
+      id="panel-hangman"
+      [attr.aria-labelledby]="'tab-hangman'"
+      [hidden]="activeTab() !== 'hangman'"
+    >
+      <app-hangman-game />
+    </section>
+    <section
+      role="tabpanel"
+      id="panel-word"
+      [attr.aria-labelledby]="'tab-word'"
+      [hidden]="activeTab() !== 'word'"
+    >
+      <app-word-game />
+    </section>
+    <section
+      role="tabpanel"
+      id="panel-twenty"
+      [attr.aria-labelledby]="'tab-twenty'"
+      [hidden]="activeTab() !== 'twenty'"
+    >
+      <app-twenty-game />
+    </section>
+    <section
+      role="tabpanel"
+      id="panel-rpg"
+      [attr.aria-labelledby]="'tab-rpg'"
+      [hidden]="activeTab() !== 'rpg'"
+    >
+      <app-rpg-game />
+    </section>
+  </main>
+
+  <footer class="colophon">
+    <p>
+      Jednoduché hry s protivníkem – Angular na papíře, .NET v pozadí, Ollama jako mozek soupeře.
+    </p>
+  </footer>
+</div>

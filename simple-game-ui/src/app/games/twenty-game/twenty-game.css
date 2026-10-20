@@ -1,0 +1,94 @@
+.twenty-board {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.twenty-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.twenty-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.prompt-title {
+  font-family: var(--font-serif);
+  font-size: 1.05rem;
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.prompt-text {
+  font-family: var(--font-serif);
+  font-size: 1.45rem;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.prompt-guess {
+  font-style: italic;
+}
+
+.prompt-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.restart-row {
+  margin-top: 0.4rem;
+}
+
+.teach-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.teach-form .field {
+  width: 100%;
+}
+
+.twenty-transcript {
+  max-height: 26rem;
+  overflow-y: auto;
+}
+
+.transcript-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.transcript-list li {
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 0.55rem;
+}
+
+.transcript-question {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.transcript-answer {
+  margin: 0.25rem 0 0;
+}
+
+.chip-answer {
+  font-family: var(--font-serif);
+  font-style: italic;
+}
+
+@media (max-width: 760px) {
+  .twenty-columns {
+    grid-template-columns: 1fr;
+  }
+}

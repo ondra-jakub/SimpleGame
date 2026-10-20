@@ -1,0 +1,138 @@
+<article class="game">
+  <header class="game-head">
+    <p class="game-kicker">Hra druhá</p>
+    <h2 class="game-title">Šibenice</h2>
+    <p class="game-lede">
+      Uhádněte tajné české slovo zadané kategorie. Tip bez diakritiky odhalí i písmeno s
+      diakritikou. Na osm chyb se vše ztratí.
+    </p>
+  </header>
+
+  @if (error(); as err) {
+    <div class="banner banner-error" role="alert">
+      <p>{{ err.message }}</p>
+      @if (err.status === 404) {
+        <p class="banner-note">Hra vypršela nebo server restartoval. Začněte novou hru.</p>
+      }
+    </div>
+  }
+
+  @if (!view()) {
+    <div class="panel start-panel">
+      <button
+        type="button"
+        class="btn btn-accent btn-start"
+        (click)="start()"
+        [disabled]="pending()"
+      >
+        Začít hru
+      </button>
+      @if (pending()) {
+        <p class="busy-hint" role="status">Losuji slovo…</p>
+      }
+    </div>
+  } @else if (view(); as v) {
+    <section class="hangman-board" [attr.aria-busy]="pending()">
+      <div class="panel hangman-drawing">
+        <svg class="gallows" viewBox="0 0 140 170" role="img" aria-hidden="false">
+          <title>Šibenice – chyb: {{ v.wrong }} z {{ v.maxWrong }}</title>
+          <g class="g-scaffold">
+            <line x1="14" y1="158" x2="86" y2="158" />
+            <line x1="34" y1="158" x2="34" y2="14" />
+            <line x1="34" y1="14" x2="104" y2="14" />
+            <line x1="34" y1="36" x2="56" y2="14" />
+          </g>
+          <g [attr.visibility]="v.wrong >= 1 ? 'visible' : 'hidden'">
+            <line x1="104" y1="14" x2="104" y2="30" />
+          </g>
+          <g [attr.visibility]="v.wrong >= 2 ? 'visible' : 'hidden'">
+            <circle cx="104" cy="42" r="12" />
+          </g>
+          <g [attr.visibility]="v.wrong >= 3 ? 'visible' : 'hidden'">
+            <line x1="104" y1="54" x2="104" y2="102" />
+          </g>
+          <g [attr.visibility]="v.wrong >= 4 ? 'visible' : 'hidden'">
+            <line x1="104" y1="62" x2="84" y2="84" />
+          </g>
+          <g [attr.visibility]="v.wrong >= 5 ? 'visible' : 'hidden'">
+            <line x1="104" y1="62" x2="124" y2="84" />
+          </g>
+          <g [attr.visibility]="v.wrong >= 6 ? 'visible' : 'hidden'">
+            <line x1="104" y1="102" x2="88" y2="134" />
+          </g>
+          <g [attr.visibility]="v.wrong >= 7 ? 'visible' : 'hidden'">
+            <line x1="104" y1="102" x2="120" y2="134" />
+          </g>
+          <g [attr.visibility]="v.wrong >= 8 ? 'visible' : 'hidden'" class="g-face">
+            <line x1="99" y1="38" x2="104" y2="43" />
+            <line x1="104" y1="38" x2="99" y2="43" />
+            <line x1="108" y1="38" x2="113" y2="43" />
+            <line x1="113" y1="38" x2="108" y2="43" />
+            <line x1="99" y1="49" x2="109" y2="49" />
+          </g>
+        </svg>
+        <p class="wrong-count mono" role="status">Chyby: {{ v.wrong }} / {{ v.maxWrong }}</p>
+      </div>
+
+      <div class="panel hangman-letters">
+        <div class="status-row">
+          <span class="chip chip-strong">Kategorie: {{ v.category }}</span>
+          @if (pending()) {
+            <span class="chip chip-busy" role="status">Zpracovávám…</span>
+          }
+        </div>
+
+        @if (v.status === 'won') {
+          <div class="banner banner-success" role="status">
+            <h3 class="banner-title">Výborně, slovo je vaše!</h3>
+            <p>
+              Hledané slovo: <strong>{{ v.word }}</strong>
+            </p>
+          </div>
+        }
+        @if (v.status === 'lost') {
+          <div class="banner banner-error" role="status">
+            <h3 class="banner-title">Sibenice je hotová…</h3>
+            <p>
+              Tajné slovo bylo <strong>{{ v.word }}</strong
+              >.
+            </p>
+          </div>
+        }
+
+        <p class="word-slots" aria-label="Uhádnuté písmena slova">
+          @for (char of slots(v.maskedWord); track $index) {
+            <span
+              class="slot"
+              [class.slot-gap]="char === ' '"
+              [class.slot-hidden]="char !== ' ' && !isLetter(char)"
+              >{{ slotChar(char) }}</span
+            >
+          }
+        </p>
+
+        <div class="keyboard" role="group" aria-label="Klávesnice písmen">
+          @for (letter of alphabet; track letter) {
+            <button
+              type="button"
+              class="key mono"
+              [class.key-hit]="isHit(letter, v)"
+              [class.key-miss]="isMiss(letter, v)"
+              [disabled]="pending() || v.status !== 'playing' || v.guessed.includes(letter)"
+              [attr.aria-label]="keyLabel(letter, v)"
+              (click)="guess(letter)"
+            >
+              {{ letter }}
+            </button>
+          }
+        </div>
+
+        <div class="hangman-actions">
+          <button type="button" class="btn btn-restart" (click)="start()" [disabled]="pending()">
+            Nová hra
+          </button>
+        </div>
+      </div>
+    </section>
+  }
+</article>

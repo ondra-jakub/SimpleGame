@@ -3,4 +3,5 @@
     <File Path="compose.yaml" />
   </Folder>
   <Project Path="SimpleGame/SimpleGame.csproj" />
+  <Project Path="SimpleGame.Tests/SimpleGame.Tests.csproj" />
 </Solution>

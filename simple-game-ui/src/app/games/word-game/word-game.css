@@ -1,0 +1,107 @@
+.word-board {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: flex-start;
+}
+
+.grid-row {
+  display: grid;
+  grid-template-columns: repeat(var(--word-length, 5), minmax(2.2rem, 3.1rem));
+  gap: 0.35rem;
+}
+
+.cell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 8px;
+  font-size: 1.35rem;
+  font-weight: 700;
+  background: #fffdf6;
+}
+
+.cell-empty {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--line);
+}
+
+.cell-draft {
+  border-color: var(--ink);
+  border-style: dashed;
+  background: #fff;
+}
+
+.cell-correct {
+  background: var(--green-soft);
+  border-color: var(--green);
+  color: var(--green-ink, #1d4a30);
+}
+
+.cell-present {
+  background: var(--amber-soft);
+  border-color: var(--amber);
+  color: #6d4707;
+}
+
+.cell-absent {
+  background: var(--paper-2);
+  border-color: var(--line-strong);
+  color: var(--ink-3);
+}
+
+.cell-mark {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  font-size: 0.6rem;
+  line-height: 1;
+}
+
+.legend {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.word-form {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.word-input {
+  width: 12rem;
+  letter-spacing: 0.25em;
+  font-size: 1.15rem;
+  text-transform: uppercase;
+}
+
+@media (max-width: 480px) {
+  .grid-row {
+    grid-template-columns: repeat(var(--word-length, 5), minmax(2.6rem, 1fr));
+  }
+
+  .word-input {
+    width: 100%;
+  }
+}

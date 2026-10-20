@@ -1,0 +1,142 @@
+<article class="game">
+  <header class="game-head">
+    <p class="game-kicker">Hra první</p>
+    <h2 class="game-title">Hádej číslo</h2>
+    <p class="game-lede">
+      Server si myslí celé číslo ze zvoleného rozsahu. Tipujte a podle nápověd „vyšší“ či „nižší“ se
+      dostaňte k cíli.
+    </p>
+  </header>
+
+  @if (error(); as err) {
+    <div class="banner banner-error" role="alert">
+      <p>{{ err.message }}</p>
+      @if (err.status === 404) {
+        <p class="banner-note">Hra vypršela nebo server restartoval. Začněte novou hru.</p>
+      }
+    </div>
+  }
+
+  @if (!view()) {
+    <form class="panel start-panel" (submit)="startGame(); $event.preventDefault()">
+      <div class="range-fields">
+        <label class="field-label" for="num-min">Od</label>
+        <input
+          id="num-min"
+          class="field"
+          type="number"
+          inputmode="numeric"
+          [value]="minInput()"
+          (input)="onMinInput($event)"
+        />
+        <label class="field-label" for="num-max">Do</label>
+        <input
+          id="num-max"
+          class="field"
+          type="number"
+          inputmode="numeric"
+          [value]="maxInput()"
+          (input)="onMaxInput($event)"
+        />
+      </div>
+      <p class="hint">Výchozí rozsah je 1–100, rozdíl mezí nejvýše 1 000 000.</p>
+      @if (formError(); as fe) {
+        <p class="field-error" role="alert">{{ fe }}</p>
+      }
+      <button type="submit" class="btn btn-accent btn-start" [disabled]="pending()">
+        Losovat číslo
+      </button>
+      @if (pending()) {
+        <p class="busy-hint" role="status">Losuji číslo…</p>
+      }
+    </form>
+  } @else if (view(); as v) {
+    <section class="panel play-panel" [attr.aria-busy]="pending()" [attr.data-session-id]="v.id">
+      <div class="status-row">
+        <span class="chip">Rozsah {{ v.min }}–{{ v.max }}</span>
+        <span class="chip chip-strong">Pokusy: {{ v.attempts }}</span>
+        @if (pending()) {
+          <span class="chip chip-busy" role="status">Ověřuji tip…</span>
+        }
+      </div>
+
+      @if (v.status === 'won') {
+        <div class="banner banner-success" role="status">
+          <h3 class="banner-title">Uhodli jste!</h3>
+          <p>
+            Číslo <strong class="mono">{{ lastGuess()?.value }}</strong> jste našli na
+            {{ v.attempts }}. pokus.
+          </p>
+        </div>
+      }
+
+      @if (v.status === 'playing') {
+        <form class="guess-row" (submit)="guess(); $event.preventDefault()">
+          <label class="sr-only" for="num-guess">Váš tip</label>
+          <input
+            id="num-guess"
+            class="field guess-field"
+            type="number"
+            inputmode="numeric"
+            [min]="v.min"
+            [max]="v.max"
+            placeholder="Váš tip"
+            [value]="guessInput()"
+            (input)="onGuessInput($event)"
+            [disabled]="pending()"
+          />
+          <button type="submit" class="btn btn-accent btn-guess" [disabled]="pending()">
+            Tipnout
+          </button>
+          <button type="button" class="btn btn-restart" (click)="restart()">Nová hra</button>
+        </form>
+        @if (formError(); as fe) {
+          <p class="field-error" role="alert">{{ fe }}</p>
+        }
+      } @else {
+        <button
+          type="button"
+          class="btn btn-accent btn-restart"
+          (click)="restart()"
+          [disabled]="pending()"
+        >
+          Hrát znovu
+        </button>
+      }
+
+      @if (v.history.length > 0) {
+        <table class="history">
+          <caption class="sr-only">
+            Historie vašich tipů, od nejnovějšího
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">Tip</th>
+              <th scope="col">Nápověda</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (h of reversedHistory(v.history); track $index) {
+              <tr [class.is-correct]="h.result === 'correct'">
+                <td class="mono">{{ h.value }}</td>
+                <td>
+                  @switch (h.result) {
+                    @case ('correct') {
+                      <span class="feedback feedback-correct">Přesně ✓</span>
+                    }
+                    @case ('higher') {
+                      <span class="feedback feedback-up">▲ Číslo je vyšší</span>
+                    }
+                    @case ('lower') {
+                      <span class="feedback feedback-down">▼ Číslo je nižší</span>
+                    }
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+    </section>
+  }
+</article>

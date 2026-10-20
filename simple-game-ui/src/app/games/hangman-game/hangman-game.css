@@ -1,0 +1,144 @@
+.hangman-board {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+.hangman-drawing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.gallows {
+  width: 100%;
+  max-width: 260px;
+  height: auto;
+}
+
+.gallows g,
+.gallows line,
+.gallows circle {
+  stroke: var(--ink);
+  stroke-width: 3.5;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.gallows .g-scaffold {
+  stroke: var(--line-strong);
+}
+
+.gallows .g-face {
+  stroke-width: 2.5;
+}
+
+.wrong-count {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+}
+
+.hangman-letters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.word-slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0;
+}
+
+.slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.1rem;
+  height: 2.6rem;
+  border-bottom: 3px solid var(--ink);
+  font-family: var(--font-serif);
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.slot-gap {
+  border-bottom: none;
+  min-width: 1rem;
+}
+
+.slot-hidden {
+  color: var(--ink-3);
+}
+
+.keyboard {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(2.4rem, 1fr));
+  gap: 0.35rem;
+}
+
+.key {
+  font-size: 1.05rem;
+  font-weight: 700;
+  padding: 0.45rem 0;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 7px;
+  background: #fffdf6;
+  color: var(--ink);
+  cursor: pointer;
+  box-shadow: 1.5px 1.5px 0 rgba(36, 28, 20, 0.28);
+}
+
+.key:hover:not(:disabled) {
+  background: #fff;
+}
+
+.key:active:not(:disabled) {
+  transform: translate(1.5px, 1.5px);
+  box-shadow: none;
+}
+
+.key:disabled {
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.key-hit {
+  background: var(--green-soft);
+  border-color: var(--green);
+  color: var(--green-ink, var(--green));
+  opacity: 1;
+}
+
+.key-hit:disabled {
+  background: var(--green-soft);
+  opacity: 1;
+}
+
+.key-miss {
+  background: var(--red-soft);
+  border-color: var(--red);
+  color: var(--red);
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+
+.hangman-actions {
+  display: flex;
+  gap: 0.6rem;
+}
+
+@media (max-width: 720px) {
+  .hangman-board {
+    grid-template-columns: 1fr;
+  }
+
+  .gallows {
+    max-width: 210px;
+  }
+}

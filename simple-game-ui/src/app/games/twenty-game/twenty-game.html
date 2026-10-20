@@ -1,0 +1,176 @@
+<article class="game">
+  <header class="game-head">
+    <p class="game-kicker">Hra čtvrtá</p>
+    <h2 class="game-title">Dvacet otázek</h2>
+    <p class="game-lede">
+      Představte si věc nebo zvíře a odpovídejte jen „ano“ a „ne“. Server se zeptá nejvýše
+      dvacetkrát včetně závěrečného tipu. Když se splete, můžete ho naučit nový pojem.
+    </p>
+  </header>
+
+  @if (error(); as err) {
+    <div class="banner banner-error" role="alert">
+      <p>{{ err.message }}</p>
+      @if (err.status === 404) {
+        <p class="banner-note">Hra vypršela nebo server restartoval. Začněte novou hru.</p>
+      }
+    </div>
+  }
+
+  @if (!view()) {
+    <div class="panel start-panel">
+      <button type="button" class="btn btn-accent" (click)="start()" [disabled]="pending()">
+        Začít hru
+      </button>
+      @if (pending()) {
+        <p class="busy-hint" role="status">Připravuji otázku…</p>
+      }
+    </div>
+  } @else if (view(); as v) {
+    <section class="twenty-board" [attr.aria-busy]="pending()">
+      <div class="status-row">
+        <span class="chip chip-strong"
+          >Položené otázky: {{ v.questionsAsked }} / {{ maxQuestions }}</span
+        >
+        <span class="chip">Zbývá {{ remainingQuestions() }} otázek</span>
+        @if (pending()) {
+          <span class="chip chip-busy" role="status">Přemýšlím…</span>
+        }
+      </div>
+
+      @if (v.message; as message) {
+        @if (v.phase !== 'finished' && v.phase !== 'giveup') {
+          <div class="banner banner-info" role="status">
+            <p>{{ message }}</p>
+          </div>
+        }
+      }
+
+      <div class="twenty-columns">
+        <div class="panel twenty-prompt">
+          @switch (v.phase) {
+            @case ('question') {
+              <h3 class="prompt-title">Otázka č. {{ v.questionsAsked }}</h3>
+              <p class="prompt-text" aria-live="polite">{{ v.question }}</p>
+              <div class="prompt-actions">
+                <button
+                  type="button"
+                  class="btn btn-accent"
+                  (click)="answer('yes')"
+                  [disabled]="pending()"
+                >
+                  Ano
+                </button>
+                <button type="button" class="btn" (click)="answer('no')" [disabled]="pending()">
+                  Ne
+                </button>
+              </div>
+            }
+            @case ('guess') {
+              <h3 class="prompt-title">Můj tip je…</h3>
+              <p class="prompt-text prompt-guess" aria-live="polite">
+                Je to <strong>{{ v.guess }}</strong
+                >?
+              </p>
+              <div class="prompt-actions">
+                <button
+                  type="button"
+                  class="btn btn-accent"
+                  (click)="verdict(true)"
+                  [disabled]="pending()"
+                >
+                  Ano, je to ono
+                </button>
+                <button type="button" class="btn" (click)="verdict(false)" [disabled]="pending()">
+                  Ne, není
+                </button>
+              </div>
+            }
+            @case ('teach') {
+              <h3 class="prompt-title">Naučte mě</h3>
+              <p class="prompt-text">
+                {{ v.guess }} to nebylo. Bylo to něco jiného? Zadejte správnou odpověď a otázku, na
+                kterou je odpověď <strong>ANO</strong> pro váš pojem a <strong>NE</strong> pro můj
+                tip.
+              </p>
+              <form class="teach-form" (submit)="teach(); $event.preventDefault()">
+                <label class="field-label" for="twenty-real">Co to ve skutečnosti bylo?</label>
+                <input
+                  id="twenty-real"
+                  class="field"
+                  type="text"
+                  autocomplete="off"
+                  maxlength="60"
+                  [value]="realAnswer()"
+                  (input)="onRealAnswerInput($event)"
+                  [disabled]="pending()"
+                />
+                <label class="field-label" for="twenty-question">
+                  Otázka (ANO pro váš pojem, NE pro můj tip)
+                </label>
+                <input
+                  id="twenty-question"
+                  class="field"
+                  type="text"
+                  autocomplete="off"
+                  maxlength="120"
+                  [value]="teachQuestion()"
+                  (input)="onTeachQuestionInput($event)"
+                  [disabled]="pending()"
+                />
+                @if (formError(); as fe) {
+                  <p class="field-error" role="alert">{{ fe }}</p>
+                }
+                <button type="submit" class="btn btn-accent" [disabled]="pending()">
+                  Naučit a uzavřít hru
+                </button>
+              </form>
+            }
+            @case ('finished') {
+              <div class="banner banner-success" role="status">
+                <h3 class="banner-title">Hra dokončena</h3>
+                <p>{{ v.message }}</p>
+              </div>
+            }
+            @case ('giveup') {
+              <div class="banner banner-error" role="status">
+                <h3 class="banner-title">Vzdávám to</h3>
+                <p>Dvacet otázek vyčerpáno a odpověď nepadla.</p>
+              </div>
+            }
+          }
+
+          @if (v.phase === 'finished' || v.phase === 'giveup') {
+            <div class="prompt-actions">
+              <button type="button" class="btn btn-accent" (click)="start()" [disabled]="pending()">
+                Hrát znovu
+              </button>
+            </div>
+          } @else {
+            <div class="restart-row">
+              <button type="button" class="btn" (click)="start()" [disabled]="pending()">
+                Nová hra
+              </button>
+            </div>
+          }
+        </div>
+
+        @if (v.transcript.length > 0) {
+          <div class="panel twenty-transcript">
+            <h3 class="prompt-title">Dosavadní průběh</h3>
+            <ol class="transcript-list">
+              @for (entry of v.transcript; track $index) {
+                <li>
+                  <p class="transcript-question">{{ entry.question }}</p>
+                  <p class="transcript-answer">
+                    <span class="chip chip-answer">{{ answerLabel(entry.answer) }}</span>
+                  </p>
+                </li>
+              }
+            </ol>
+          </div>
+        }
+      </div>
+    </section>
+  }
+</article>

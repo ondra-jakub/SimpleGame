@@ -1,0 +1,76 @@
+.game-head {
+  margin-bottom: 1rem;
+}
+
+.start-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  align-items: flex-start;
+}
+
+.range-fields {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.range-fields .field {
+  width: 9rem;
+}
+
+.guess-row {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.guess-field {
+  width: 10rem;
+}
+
+.history {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+  font-size: 0.95rem;
+}
+
+.history th,
+.history td {
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.history thead th {
+  font-family: var(--font-serif);
+  letter-spacing: 0.02em;
+  border-bottom: 1.5px solid var(--line-strong);
+}
+
+.history .is-correct td {
+  background: var(--green-soft);
+}
+
+.feedback {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.feedback-up {
+  color: var(--green);
+}
+
+.feedback-down {
+  color: var(--accent-ink);
+}
+
+@media (max-width: 480px) {
+  .guess-field {
+    width: 100%;
+  }
+}
