@@ -50,6 +50,10 @@ public sealed class OllamaTests
     private const string EmptyTagsJson = "{\"models\":[]}";
     private static readonly OpponentContext FullContext = new(100, 90, 1, 0, ["attack", "special", "heal"], "attack");
 
+    private static string ChatResponse(string contentJson) =>
+        "{\"model\":\"llama3\",\"message\":{\"role\":\"assistant\",\"thinking\":\"skryte uvazovani, ktere se nesmi pouzit\",\"content\":" +
+        JsonSerializer.Serialize(contentJson) + "},\"done\":true}";
+
     private static string DecisionResponse(
         string choice = "special",
         string probabilities = "{\"attack\":0.407,\"special\":0.358,\"heal\":0.235}",
@@ -58,6 +62,13 @@ public sealed class OllamaTests
         "{\"model\":\"d1:latest\",\"answers\":{\"akce\":{\"type\":\"choice\",\"choice\":\"" + choice + "\"," +
         "\"probabilities\":" + probabilities + ",\"confidence\":" + confidence.ToString(System.Globalization.CultureInfo.InvariantCulture) +
         "},\"ohrozeni\":{\"type\":\"noul\",\"noul\":" + noul.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}},\"usage\":{\"input_tokens\":464}}";
+
+    private static PiskvorkyContext SquareContext(string? attemptFeedback = null, int? lastMoveIndex = null)
+    {
+        var markedRow = new string('.', 15).Remove(3, 1).Insert(3, "X");
+        var board = string.Join('\n', Enumerable.Range(0, 15).Select(row => row == 0 ? markedRow : new string('.', 15)));
+        return new PiskvorkyContext(15, "X", board, 1, lastMoveIndex, attemptFeedback);
+    }
 
     private static (OllamaClient Client, ScriptedHandler Handler, FakeClock Clock, ModelCatalogCache Cache) Create(OllamaOptions? options = null)
     {
@@ -459,5 +470,183 @@ public sealed class OllamaTests
         Assert.NotNull(decision.Decision);
         Assert.Null(decision.Decision!.Danger);
         Assert.Equal(0.8, decision.Decision.Confidence, 3);
+    }
+
+    [Fact]
+    public async Task Square_ValidMove_ParsesContentOnlyAndSendsRequiredSchema()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson(ChatResponse("{\"row\":7,\"col\":8}"));
+        var decision = await client.ChooseSquareAsync("llama3", SquareContext(), CancellationToken.None);
+        Assert.Equal(7, decision.Row);
+        Assert.Equal(8, decision.Col);
+        Assert.Null(decision.FallbackReason);
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal("POST http://ollama/api/chat", handler.Requests[0]);
+
+        using var body = JsonDocument.Parse(handler.Bodies[0]!);
+        var root = body.RootElement;
+        Assert.Equal("llama3", root.GetProperty("model").GetString());
+        Assert.False(root.GetProperty("stream").GetBoolean());
+        Assert.False(root.GetProperty("think").GetBoolean());
+        Assert.Equal("10m", root.GetProperty("keep_alive").GetString());
+        Assert.Equal(64, root.GetProperty("options").GetProperty("num_predict").GetInt32());
+        var format = root.GetProperty("format");
+        Assert.Equal("object", format.GetProperty("type").GetString());
+        foreach (var field in new[] { "row", "col" })
+        {
+            var property = format.GetProperty("properties").GetProperty(field);
+            Assert.Equal("integer", property.GetProperty("type").GetString());
+            Assert.Equal(0, property.GetProperty("minimum").GetInt32());
+            Assert.Equal(14, property.GetProperty("maximum").GetInt32());
+        }
+        Assert.Equal(new string?[] { "row", "col" }, format.GetProperty("required").EnumerateArray().Select(e => e.GetString()));
+        Assert.False(format.GetProperty("additionalProperties").GetBoolean());
+        var messages = root.GetProperty("messages").EnumerateArray().ToArray();
+        Assert.Equal(2, messages.Length);
+        Assert.Equal("system", messages[0].GetProperty("role").GetString());
+        var system = messages[0].GetProperty("content").GetString();
+        Assert.Contains("piskvork", system);
+        Assert.Contains("pet kamenu", system);
+        Assert.Equal("user", messages[1].GetProperty("role").GetString());
+        using var contextJson = JsonDocument.Parse(messages[1].GetProperty("content").GetString()!);
+        var context = contextJson.RootElement;
+        Assert.Equal(15, context.GetProperty("size").GetInt32());
+        Assert.Equal("X", context.GetProperty("playerSymbol").GetString());
+        var boardText = context.GetProperty("boardText").GetString()!;
+        Assert.Equal(15, boardText.Split('\n').Length);
+        Assert.All(boardText.Split('\n'), line => Assert.Equal(15, line.Length));
+        Assert.Contains("X", boardText);
+        Assert.Equal(1, context.GetProperty("moveNumber").GetInt32());
+        Assert.Equal(JsonValueKind.Null, context.GetProperty("lastMoveIndex").ValueKind);
+        Assert.Equal(JsonValueKind.Null, context.GetProperty("attemptFeedback").ValueKind);
+    }
+
+    [Fact]
+    public async Task Square_MissingOrEmptyContent_FallsBack()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson(ChatResponse(""));
+        var first = await client.ChooseSquareAsync("llama3", SquareContext(), CancellationToken.None);
+        Assert.Null(first.Row);
+        Assert.Null(first.Col);
+        Assert.Contains("neplatne souradnice", first.FallbackReason);
+
+        var (client2, handler2, _, _) = Create();
+        handler2.RespondWithJson("{\"model\":\"llama3\",\"message\":{\"role\":\"assistant\",\"content\":null},\"done\":true}");
+        var second = await client2.ChooseSquareAsync("llama3", SquareContext(), CancellationToken.None);
+        Assert.Null(second.Row);
+        Assert.Contains("neplatne souradnice", second.FallbackReason);
+
+        var (client3, handler3, _, _) = Create();
+        handler3.RespondWithJson("{\"model\":\"llama3\",\"message\":{\"role\":\"assistant\"},\"done\":true}");
+        var third = await client3.ChooseSquareAsync("llama3", SquareContext(), CancellationToken.None);
+        Assert.Null(third.Row);
+        Assert.Contains("neplatne souradnice", third.FallbackReason);
+    }
+
+    [Fact]
+    public async Task Square_InvalidJsonTypesOrRange_FallsBack()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson(ChatResponse("ahoj, jak je?"));
+        var invalid = await client.ChooseSquareAsync("llama3", SquareContext(), CancellationToken.None);
+        Assert.Null(invalid.Row);
+        Assert.Contains("neplatne souradnice", invalid.FallbackReason);
+
+        var (client2, handler2, _, _) = Create();
+        handler2.RespondWithJson(ChatResponse("{\"row\":7}"));
+        var missing = await client2.ChooseSquareAsync("llama3", SquareContext(), CancellationToken.None);
+        Assert.Null(missing.Col);
+        Assert.Contains("neplatne souradnice", missing.FallbackReason);
+
+        var (client3, handler3, _, _) = Create();
+        handler3.RespondWithJson(ChatResponse("{\"row\":\"7\",\"col\":\"8\"}"));
+        var strings = await client3.ChooseSquareAsync("llama3", SquareContext(), CancellationToken.None);
+        Assert.Null(strings.Row);
+        Assert.Contains("neplatne souradnice", strings.FallbackReason);
+
+        var (client4, handler4, _, _) = Create();
+        handler4.RespondWithJson(ChatResponse("{\"row\":15,\"col\":0}"));
+        var outOfRange = await client4.ChooseSquareAsync("llama3", SquareContext(), CancellationToken.None);
+        Assert.Null(outOfRange.Row);
+        Assert.Contains("neplatne souradnice", outOfRange.FallbackReason);
+
+        var (client5, handler5, _, _) = Create();
+        handler5.RespondWithJson(ChatResponse("{\"row\":0,\"col\":-1}"));
+        var negative = await client5.ChooseSquareAsync("llama3", SquareContext(), CancellationToken.None);
+        Assert.Null(negative.Col);
+        Assert.Contains("neplatne souradnice", negative.FallbackReason);
+
+        var (client6, handler6, _, _) = Create();
+        handler6.RespondWithJson(ChatResponse("{\"row\":7.5,\"col\":8}"));
+        var fraction = await client6.ChooseSquareAsync("llama3", SquareContext(), CancellationToken.None);
+        Assert.Null(fraction.Row);
+        Assert.Contains("neplatne souradnice", fraction.FallbackReason);
+    }
+
+    [Fact]
+    public async Task Square_AttemptFeedbackAndLastMove_TravelInUserMessage()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson(ChatResponse("{\"row\":3,\"col\":4}"));
+        var context = SquareContext("Model zvolil jiz obsazene pole (radek 0, sloupec 0).", lastMoveIndex: 3);
+        var decision = await client.ChooseSquareAsync("llama3", context, CancellationToken.None);
+        Assert.Equal(3, decision.Row);
+        Assert.Equal(4, decision.Col);
+
+        using var body = JsonDocument.Parse(handler.Bodies[0]!);
+        using var user = JsonDocument.Parse(body.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!);
+        Assert.Equal("Model zvolil jiz obsazene pole (radek 0, sloupec 0).", user.RootElement.GetProperty("attemptFeedback").GetString());
+        Assert.Equal(3, user.RootElement.GetProperty("lastMoveIndex").GetInt32());
+    }
+
+    [Fact]
+    public async Task Square_HttpErrorForRemovedOrEmbeddingOnlyModel_FallsBackWithStatusReason()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson("{\"error\":\"model not found\"}", HttpStatusCode.NotFound);
+        var removed = await client.ChooseSquareAsync("llama3", SquareContext(), CancellationToken.None);
+        Assert.Null(removed.Row);
+        Assert.Contains("HTTP 404", removed.FallbackReason);
+
+        handler.RespondWithJson("{\"error\":\"does not support chat\"}", HttpStatusCode.BadRequest);
+        var embeddingOnly = await client.ChooseSquareAsync("llama3", SquareContext(), CancellationToken.None);
+        Assert.Null(embeddingOnly.Row);
+        Assert.Contains("HTTP 400", embeddingOnly.FallbackReason);
+    }
+
+    [Fact]
+    public async Task Square_ConnectionFailure_FallsBackWithConnectionReason()
+    {
+        var (client, handler, _, _) = Create();
+        handler.ThrowConnectionFailure = true;
+        var decision = await client.ChooseSquareAsync("llama3", SquareContext(), CancellationToken.None);
+        Assert.Null(decision.Row);
+        Assert.Null(decision.Col);
+        Assert.Contains("Spojeni s Ollamou selhalo", decision.FallbackReason);
+    }
+
+    [Fact]
+    public async Task Square_Timeout_FallsBackExactlyOnce()
+    {
+        var (client, handler, _, _) = Create(new OllamaOptions { MoveTimeoutSeconds = 0.01 });
+        handler.Blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var decision = await client.ChooseSquareAsync("llama3", SquareContext(), CancellationToken.None);
+        Assert.Null(decision.Row);
+        Assert.Contains("neodpovedel vcas", decision.FallbackReason);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task Square_CallerCancellation_Propagates()
+    {
+        var (client, handler, _, _) = Create();
+        handler.Blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cts = new CancellationTokenSource();
+        var pending = client.ChooseSquareAsync("llama3", SquareContext(), cts.Token);
+        Assert.False(pending.IsCompleted);
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
     }
 }

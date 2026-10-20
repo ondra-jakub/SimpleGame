@@ -1,11 +1,12 @@
 import { Component, signal } from '@angular/core';
 import { HangmanGame } from './games/hangman-game/hangman-game';
 import { NumberGame } from './games/number-game/number-game';
+import { PiskvorkyGame } from './games/piskvorky-game/piskvorky-game';
 import { RpgGame } from './games/rpg-game/rpg-game';
 import { TwentyGame } from './games/twenty-game/twenty-game';
 import { WordGame } from './games/word-game/word-game';
 
-type GameTabId = 'number' | 'hangman' | 'word' | 'twenty' | 'rpg';
+type GameTabId = 'number' | 'hangman' | 'word' | 'twenty' | 'rpg' | 'piskvorky';
 
 interface GameTab {
   id: GameTabId;
@@ -14,7 +15,7 @@ interface GameTab {
 }
 
 @Component({
-  imports: [NumberGame, HangmanGame, WordGame, TwentyGame, RpgGame],
+  imports: [NumberGame, HangmanGame, WordGame, TwentyGame, RpgGame, PiskvorkyGame],
   selector: 'app-root',
   styleUrl: './app.css',
   templateUrl: './app.html',
@@ -28,6 +29,7 @@ export class App {
     { id: 'word', label: 'Slovo', title: 'Hádej slovo' },
     { id: 'twenty', label: '20 otázek', title: 'Dvacet otázek' },
     { id: 'rpg', label: 'Souboj', title: 'Souboj arén' },
+    { id: 'piskvorky', label: 'Piškvorky', title: 'Piškvorky' },
   ];
 
   protected selectTab(tab: GameTabId): void {

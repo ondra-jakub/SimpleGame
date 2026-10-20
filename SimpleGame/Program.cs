@@ -25,6 +25,7 @@ builder.Services.AddHttpClient<IOllamaClient, OllamaClient>((services, http) =>
     http.MaxResponseContentBufferSize = 4 * 1024 * 1024;
 });
 builder.Services.AddTransient<RpgEngine>();
+builder.Services.AddTransient<PiskvorkyEngine>();
 
 var app = builder.Build();
 app.Use(async (context, next) =>
@@ -65,6 +66,7 @@ games.MapHangmanGame();
 games.MapWordGame();
 games.MapTwentyGame();
 games.MapRpgGame();
+games.MapPiskvorkyGame();
 app.MapFallback(() => Results.NotFound(new ApiError("not_found", "Pozadovana cesta neexistuje.")));
 app.Run();
 

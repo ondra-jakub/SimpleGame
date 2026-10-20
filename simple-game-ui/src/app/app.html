@@ -1,10 +1,10 @@
 <div class="shell">
   <header class="masthead">
-    <p class="masthead-kicker">SALON JEDNODUCHÝCH HER · VÝROČNÍ ČÍSLO V</p>
+    <p class="masthead-kicker">SALON JEDNODUCHÝCH HER · VÝROČNÍ ČÍSLO VI</p>
     <h1 class="masthead-title">Papírová arkáda</h1>
     <p class="masthead-sub">
-      Pět her proti serveru: hádané číslo, šibenice, slovo, dvacet otázek a souboj s protivníkem z
-      Ollamy. Vše česky, vše na jednom místě.
+      Šest her proti serveru: hádané číslo, šibenice, slovo, dvacet otázek, souboj s protivníkem
+      z Ollamy a piškvorky, kde můžou obě strany hrát modely. Vše česky, vše na jednom místě.
     </p>
     <p class="asterism" aria-hidden="true">⁂</p>
   </header>
@@ -66,6 +66,14 @@
       [hidden]="activeTab() !== 'rpg'"
     >
       <app-rpg-game />
+    </section>
+    <section
+      role="tabpanel"
+      id="panel-piskvorky"
+      [attr.aria-labelledby]="'tab-piskvorky'"
+      [hidden]="activeTab() !== 'piskvorky'"
+    >
+      <app-piskvorky-game />
     </section>
   </main>
 
