@@ -1,0 +1,7 @@
+﻿services:
+  simplegame:
+    image: simplegame
+    build:
+      context: .
+      dockerfile: SimpleGame/Dockerfile
+
