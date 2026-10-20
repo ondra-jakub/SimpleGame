@@ -124,6 +124,7 @@ public sealed class ApiTests
         var start = await client.PostAsJsonAsync("/api/games/rpg/start", new { model = (string?)null });
         var view = await start.Content.ReadFromJsonAsync<Games.RpgView>();
         Assert.Equal(0, view!.Revision);
+        Assert.Equal("classic", view.OpponentMode);
         var route = $"/api/games/rpg/{view.Id}";
         using var missingRevision = await client.PostAsJsonAsync(route + "/action", new { action = "heal" });
         Assert.Equal(HttpStatusCode.BadRequest, missingRevision.StatusCode);
@@ -132,7 +133,7 @@ public sealed class ApiTests
         var confirmed = await client.GetFromJsonAsync<Games.RpgView>(route);
         Assert.Equal(1, confirmed!.Revision);
         Assert.False(confirmed.InProgress);
-        Assert.Equal("heuristic", confirmed.LastOpponentMove!.Source);
+        Assert.Equal("classic", confirmed.LastOpponentMove!.Source);
         using var duplicate = await client.PostAsJsonAsync(route + "/action", new { action = "heal", expectedRevision = 0 });
         Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
         Assert.Equal("conflict", (await duplicate.Content.ReadFromJsonAsync<ApiError>())!.Code);
@@ -142,7 +143,7 @@ public sealed class ApiTests
     {
         public Task<ModelsView> GetModelsAsync(bool refresh, CancellationToken cancellationToken) =>
             Task.FromResult(new ModelsView(false, [], "Offline pro test."));
-        public Task<OpponentDecision> ChooseMoveAsync(string model, OpponentContext context, CancellationToken cancellationToken) =>
+        public Task<OpponentDecision> ChooseDecisionMoveAsync(string model, OpponentContext context, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("A classic game must not call Ollama.");
     }
 }

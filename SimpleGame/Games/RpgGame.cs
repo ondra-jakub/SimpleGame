@@ -1,24 +1,39 @@
 namespace SimpleGame.Games;
 
-public sealed record OpponentMove(string Source, string? Model, string Action, string? Taunt, string? FallbackReason);
+public static class OpponentModes
+{
+    public const string Classic = "classic";
+    public const string Decision = "decision";
+}
+
+public static class OpponentSources
+{
+    public const string Classic = "classic";
+    public const string Decision = "decision";
+    public const string Heuristic = "heuristic";
+}
+
+public sealed record OpponentMove(string Source, string? Model, string Action, string? Taunt, string? FallbackReason,
+    DecisionDetail? Decision = null);
 public sealed record RpgState(int PlayerHp = 100, int OpponentHp = 100, int PlayerCooldown = 0, int OpponentCooldown = 0,
     int Round = 1, int Revision = 0, string Status = "playing", string[]? Log = null, OpponentMove? LastOpponentMove = null);
-public sealed record RpgView(Guid Id, string? Model, int PlayerHp, int OpponentHp, int PlayerCooldown, int OpponentCooldown,
+public sealed record RpgView(Guid Id, string? Model, string OpponentMode, int PlayerHp, int OpponentHp, int PlayerCooldown, int OpponentCooldown,
     int Round, int Revision, bool InProgress, string Status, string[] Log, OpponentMove? LastOpponentMove);
 public sealed record RpgStartRequest(string? Model);
 public sealed record RpgActionRequest(string Action, int? ExpectedRevision);
 
-public sealed class RpgSession(string? model) : GameSession
+public sealed class RpgSession(string? model, string opponentMode) : GameSession
 {
     private RpgState state = new();
     private int inProgress;
     public string? Model { get; } = model;
+    public string OpponentMode { get; } = opponentMode;
     public RpgState State { get => Volatile.Read(ref state); set => Volatile.Write(ref state, value); }
     public bool InProgress { get => Volatile.Read(ref inProgress) == 1; set => Volatile.Write(ref inProgress, value ? 1 : 0); }
     public RpgView View()
     {
         var snapshot = State;
-        return new RpgView(Id, Model, snapshot.PlayerHp, snapshot.OpponentHp, snapshot.PlayerCooldown, snapshot.OpponentCooldown,
+        return new RpgView(Id, Model, OpponentMode, snapshot.PlayerHp, snapshot.OpponentHp, snapshot.PlayerCooldown, snapshot.OpponentCooldown,
             snapshot.Round, snapshot.Revision, InProgress, snapshot.Status, snapshot.Log ?? [], snapshot.LastOpponentMove);
     }
 }
@@ -27,17 +42,22 @@ public sealed class RpgEngine(SessionStore sessions, IGameRandom random, IOllama
 {
     public async Task<RpgView> StartAsync(RpgStartRequest request, CancellationToken cancellationToken)
     {
+        var opponentMode = OpponentModes.Classic;
         if (request.Model is not null)
         {
             if (request.Model.Length is 0 or > 256) throw GameException.Invalid("Zvolte platny model nebo klasickou AI.");
             var models = await ollama.GetModelsAsync(false, cancellationToken);
             if (!models.Available)
                 throw new GameException(503, "ollama_unavailable", "Ollama neni dostupna. Zvolte klasickou AI nebo zkuste obnovit modely.");
-            if (!models.Models.Any(m => m.Name == request.Model))
+            var selected = models.Models.FirstOrDefault(m => m.Name == request.Model);
+            if (selected is null)
                 throw GameException.Invalid("Tento model neni nainstalovany v Ollame. Obnovte seznam modelu.");
+            if (!selected.Supports("decision"))
+                throw GameException.Invalid("Tento model neumi decision rezim a nemuze byt protivnikem. Zvolte decision model nebo klasickou AI.");
+            opponentMode = OpponentModes.Decision;
         }
         cancellationToken.ThrowIfCancellationRequested();
-        return sessions.Add(new RpgSession(request.Model)).View();
+        return sessions.Add(new RpgSession(request.Model, opponentMode)).View();
     }
 
     public RpgView Get(Guid id)
@@ -71,12 +91,21 @@ public sealed class RpgEngine(SessionStore sessions, IGameRandom random, IOllama
             if (working.OpponentHp > 0)
             {
                 var allowed = working.OpponentCooldown == 0 ? new[] { "attack", "special", "heal" } : ["attack", "heal"];
-                var decision = session.Model is null ? null : await ollama.ChooseMoveAsync(session.Model,
-                    new OpponentContext(working.PlayerHp, working.OpponentHp, working.Round, working.OpponentCooldown, allowed, request.Action), token);
+                OpponentDecision? decision = null;
+                if (session.OpponentMode == OpponentModes.Decision)
+                {
+                    var recentLog = (current.Log ?? []).Concat(turnLog).TakeLast(3).ToArray();
+                    decision = await ollama.ChooseDecisionMoveAsync(session.Model!,
+                        new OpponentContext(working.PlayerHp, working.OpponentHp, working.Round, working.OpponentCooldown,
+                            allowed, request.Action, working.PlayerCooldown) { RecentLog = recentLog }, token);
+                }
                 token.ThrowIfCancellationRequested();
                 var action = decision?.Action ?? Heuristic(working);
-                move = new OpponentMove(decision?.Action is not null ? "llm" : "heuristic", session.Model, action,
-                    decision?.Taunt, decision?.FallbackReason);
+                var source = session.OpponentMode == OpponentModes.Decision
+                    ? decision?.Action is not null ? OpponentSources.Decision : OpponentSources.Heuristic
+                    : OpponentSources.Classic;
+                move = new OpponentMove(source, session.Model, action, decision?.Taunt, decision?.FallbackReason,
+                    source == OpponentSources.Decision ? decision?.Decision : null);
                 if (move.FallbackReason is not null) turnLog.Add($"Nahradni AI: {move.FallbackReason}");
                 if (!string.IsNullOrEmpty(move.Taunt)) turnLog.Add($"Protivnik: {move.Taunt}");
                 working = Apply(working, action, false, turnLog);

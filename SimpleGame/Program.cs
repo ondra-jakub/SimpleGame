@@ -9,7 +9,7 @@ builder.Services.AddOptions<SimpleGame.SessionOptions>().BindConfiguration("Sess
     .Validate(o => o.MaxSessions > 0 && o.IdleTimeout > TimeSpan.Zero, "Invalid session limits.").ValidateOnStart();
 builder.Services.AddOptions<OllamaOptions>().BindConfiguration("Ollama")
     .Validate(o => Uri.TryCreate(o.BaseUrl, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https", "Invalid Ollama BaseUrl.")
-    .Validate(o => o.ModelsTimeoutSeconds is > 0 and <= 300 && o.MoveTimeoutSeconds is > 0 and <= 300, "Invalid Ollama timeout.")
+    .Validate(o => o.ModelsTimeoutSeconds is > 0 and <= 300 && o.DecisionTimeoutSeconds is > 0 and <= 300, "Invalid Ollama timeout.")
     .ValidateOnStart();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<SessionStore>();

@@ -4,7 +4,7 @@
     <h2 class="game-title">Souboj arén</h2>
     <p class="game-lede">
       Klasický RPG souboj: útok, speciální útok s cooldownem a léčení. Protivníkem může být klasická
-      AI, nebo model z Ollamy, který vymýšlí tahy i průpovídky.
+      AI, nebo decision model z Ollamy, který volí tah pravděpodobnostně a vrací jistotu i náladu.
     </p>
   </header>
 
@@ -64,6 +64,7 @@
             <div class="status-row">
               <span class="chip chip-strong">Kolo {{ v.round }}</span>
               <span class="chip">Vy: {{ v.playerHp }} HP · Soupeř: {{ v.opponentHp }} HP</span>
+              <span class="chip">{{ opponentModeLabel(v) }}</span>
             </div>
           </header>
 
@@ -123,7 +124,7 @@
             <div class="banner banner-warn" role="status">
               <h3 class="banner-title">Tah převzala záložní klasická AI</h3>
               <p>
-                Model {{ v.model }} nedokončil platný tah
+                Model {{ v.model }} nedokončil platné rozhodnutí
                 @if (fallback.fallbackReason; as reason) {
                   ({{ reason }})
                 }
@@ -132,10 +133,30 @@
             </div>
           }
 
+          @if (decisionDetail(); as detail) {
+            <div class="decision-panel">
+              <h4 class="panel-title">Rozhodnutí modelu</h4>
+              <ul class="decision-list">
+                @for (entry of probabilityEntries(detail); track entry.action) {
+                  <li>
+                    <span class="decision-label">{{ entry.label }}</span>
+                    <span class="decision-value mono">{{ percent(entry.value) }}</span>
+                  </li>
+                }
+              </ul>
+              <p class="decision-note">
+                Jistota: <span class="mono">{{ percent(detail.confidence) }}</span>
+                @if (dangerLabel(detail); as mood) {
+                  · Nálada: {{ mood }}
+                }
+              </p>
+            </div>
+          }
+
           @if (v.lastOpponentMove?.taunt; as taunt) {
             <blockquote class="taunt">
               „{{ taunt }}“
-              <footer>{{ opponentLabel(v) }}</footer>
+              <footer>Serverová šablona podle rozhodnutí modelu</footer>
             </blockquote>
           }
 
@@ -241,7 +262,7 @@
         @if (selectedModelMissing()) {
           <option [value]="selectedModel()">{{ selectedModel() }} (nyní nedostupný)</option>
         }
-        @for (model of models(); track model.name) {
+        @for (model of decisionModels(); track model.name) {
           <option [value]="model.name">{{ model.name }} ({{ formatSize(model.sizeBytes) }})</option>
         }
       </select>
@@ -256,6 +277,14 @@
               <p>
                 Ollama běží, ale nemá nainstalované žádné modely. K dispozici je klasická AI. Modely
                 nainstalujte v Ollamě a seznam obnovte.
+              </p>
+            </div>
+          } @else if (decisionModels().length === 0) {
+            <div class="banner banner-info" role="status">
+              <p>
+                Žádný nainstalovaný model neumí decision režim, takže protivníkem může být jen
+                klasická AI. Nainstalujte decision model (například <code>d1</code>) a seznam
+                obnovte.
               </p>
             </div>
           } @else {
@@ -280,7 +309,8 @@
 
       @if (modelWarning()) {
         <p class="models-note models-warning">
-          Pozor: první tah s modelem může trvat déle – Ollama nahrává model do paměti.
+          Protivník rozhoduje pravděpodobnostně: uvidíte rozdělení šancí, jistotu a náladu modelu.
+          První tah může trvat déle – Ollama nahrává model do paměti.
         </p>
       }
       @if (selectedModelMissing()) {

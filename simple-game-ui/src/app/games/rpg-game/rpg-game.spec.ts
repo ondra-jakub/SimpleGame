@@ -8,6 +8,7 @@ function battleState(overrides: Partial<RpgState> = {}): RpgState {
   return {
     id: 'rpg-1',
     model: null,
+    opponentMode: 'classic',
     playerHp: 100,
     opponentHp: 100,
     playerCooldown: 0,
@@ -47,11 +48,13 @@ describe('RpgGame', () => {
   function flushModels(
     body: {
       available: boolean;
-      models?: { name: string; sizeBytes: number }[];
+      models?: { name: string; sizeBytes: number; capabilities?: string[] }[];
       message?: string;
     } = {
       available: true,
-      models: [{ name: 'llama3.2:3b', sizeBytes: 2_051_000_000 }],
+      models: [
+        { name: 'd1:latest', sizeBytes: 2_051_000_000, capabilities: ['decision', 'vision'] },
+      ],
     },
   ): void {
     const request = http.expectOne('/api/llm/models');
@@ -80,17 +83,49 @@ describe('RpgGame', () => {
     if (!select) {
       throw new Error('Model select not found');
     }
-    select.value = 'llama3.2:3b';
+    select.value = 'd1:latest';
     select.dispatchEvent(new Event('change'));
     fixture.detectChanges();
 
     clickButton('.btn-restart');
     const request = http.expectOne({ method: 'POST', url: '/api/games/rpg/start' });
-    expect(request.request.body).toEqual({ model: 'llama3.2:3b' });
-    request.flush(battleState({ model: 'llama3.2:3b' }));
+    expect(request.request.body).toEqual({ model: 'd1:latest' });
+    request.flush(battleState({ model: 'd1:latest', opponentMode: 'decision' }));
     fixture.detectChanges();
     expect(el.textContent).toContain('Souboj s');
-    expect(el.textContent).toContain('llama3.2:3b');
+    expect(el.textContent).toContain('d1:latest');
+    expect(el.textContent).toContain('Decision model');
+  });
+
+  it('offers only decision capable models in the opponent dropdown', () => {
+    flushModels({
+      available: true,
+      models: [
+        { name: 'd1:latest', sizeBytes: 3_730_544_597, capabilities: ['decision', 'vision'] },
+        {
+          name: 'qwen3.5:0.8b',
+          sizeBytes: 520_000_000,
+          capabilities: ['completion', 'vision', 'tools'],
+        },
+        { name: 'legacy:model', sizeBytes: 1_000 },
+      ],
+    });
+
+    const select = el.querySelector<HTMLSelectElement>('#model-select');
+    const values = Array.from(select?.options ?? []).map((option) => option.value);
+    expect(values).toEqual(['__classic__', 'd1:latest']);
+  });
+
+  it('warns when no installed model supports the decision mode', () => {
+    flushModels({
+      available: true,
+      models: [{ name: 'qwen3.5:0.8b', sizeBytes: 520_000_000, capabilities: ['completion'] }],
+    });
+    expect(el.textContent).toContain('neumí decision režim');
+    const select = el.querySelector<HTMLSelectElement>('#model-select');
+    expect(Array.from(select?.options ?? []).map((option) => option.value)).toEqual([
+      '__classic__',
+    ]);
   });
 
   it('sends model null for the classic AI opponent', () => {
@@ -104,16 +139,16 @@ describe('RpgGame', () => {
   it('keeps the chosen model after an outage instead of silently starting classic AI', () => {
     flushModels();
     const select = el.querySelector<HTMLSelectElement>('#model-select')!;
-    select.value = 'llama3.2:3b';
+    select.value = 'd1:latest';
     select.dispatchEvent(new Event('change'));
     fixture.detectChanges();
     clickButton('.btn-refresh');
     http.expectOne('/api/llm/models').flush({ available: false, models: [] });
     fixture.detectChanges();
-    expect(select.value).toBe('llama3.2:3b');
+    expect(select.value).toBe('d1:latest');
     clickButton('.btn-restart');
-    const request = http.expectOne('/api/games/rpg/start');
-    expect(request.request.body).toEqual({ model: 'llama3.2:3b' });
+    const request = http.expectOne({ method: 'POST', url: '/api/games/rpg/start' });
+    expect(request.request.body).toEqual({ model: 'd1:latest' });
     request.flush(
       { code: 'ollama_unavailable', message: 'Zvolte klasickou AI.' },
       { status: 503, statusText: 'Unavailable' },
@@ -124,7 +159,7 @@ describe('RpgGame', () => {
     flushModels();
     startBattle();
     const select = el.querySelector<HTMLSelectElement>('#model-select')!;
-    select.value = 'llama3.2:3b';
+    select.value = 'd1:latest';
     select.dispatchEvent(new Event('change'));
     fixture.detectChanges();
     expect(el.querySelector('.battle-head')?.textContent).toContain('Klasická AI');
@@ -162,7 +197,9 @@ describe('RpgGame', () => {
     startBattle();
     expect(el.querySelector<HTMLButtonElement>('.btn-attack')?.disabled).toBe(false);
     clickButton('.btn-attack');
-    http.expectOne('/api/games/rpg/rpg-1/action').flush(battleState({ inProgress: true }));
+    http
+      .expectOne({ method: 'POST', url: '/api/games/rpg/rpg-1/action' })
+      .flush(battleState({ inProgress: true }));
     fixture.detectChanges();
     expect(el.querySelector<HTMLButtonElement>('.btn-attack')?.disabled).toBe(true);
     expect(el.querySelector<HTMLButtonElement>('.btn-restart')?.disabled).toBe(true);
@@ -175,13 +212,15 @@ describe('RpgGame', () => {
   it('does not offer actions after the battle ends', () => {
     flushModels();
     clickButton('.btn-restart');
-    http.expectOne('/api/games/rpg/start').flush(battleState({ status: 'won', opponentHp: 0 }));
+    http
+      .expectOne({ method: 'POST', url: '/api/games/rpg/start' })
+      .flush(battleState({ status: 'won', opponentHp: 0 }));
     fixture.detectChanges();
     expect(el.querySelector('.btn-attack')).toBeNull();
     expect(el.textContent).toContain('Vítězství!');
   });
 
-  it('marks a heuristic fallback visibly in an LLM battle', () => {
+  it('marks a heuristic fallback visibly in a decision battle', () => {
     flushModels();
     startBattle();
 
@@ -189,28 +228,29 @@ describe('RpgGame', () => {
     const request = http.expectOne({ method: 'POST', url: '/api/games/rpg/rpg-1/action' });
     request.flush(
       battleState({
-        model: 'llama3.2:3b',
+        model: 'd1:latest',
+        opponentMode: 'decision',
         revision: 1,
         round: 1,
         log: ['Záložní AI převzala tah protivníka.'],
         lastOpponentMove: {
           source: 'heuristic',
-          model: 'llama3.2:3b',
+          model: 'd1:latest',
           action: 'attack',
           taunt: 'Tohle bolí, viď?',
-          fallbackReason: 'Ollama neodpověděla včas',
+          fallbackReason: 'Model neodpověděl včas',
+          decision: null,
         },
       }),
     );
     fixture.detectChanges();
 
     expect(el.textContent).toContain('záložní klasická AI');
-    expect(el.textContent).toContain('Ollama neodpověděla včas');
-    expect(el.textContent).toContain('Tohle bolí, viď?');
+    expect(el.textContent).toContain('Model neodpověděl včas');
     expect(el.textContent).toContain('Záložní AI převzala tah protivníka.');
   });
 
-  it('does not mark a successful LLM move as a fallback', () => {
+  it('shows the decision detail of a decision move', () => {
     flushModels();
     startBattle();
 
@@ -218,15 +258,60 @@ describe('RpgGame', () => {
     const request = http.expectOne({ method: 'POST', url: '/api/games/rpg/rpg-1/action' });
     request.flush(
       battleState({
-        model: 'llama3.2:3b',
+        model: 'd1:latest',
+        opponentMode: 'decision',
         revision: 1,
         round: 1,
         lastOpponentMove: {
-          source: 'llm',
-          model: 'llama3.2:3b',
+          source: 'decision',
+          model: 'd1:latest',
+          action: 'special',
+          taunt: 'Protivník váhá: útok 41 %, speciální 36 %.',
+          fallbackReason: null,
+          decision: {
+            probabilities: { attack: 0.407, special: 0.358, heal: 0.235 },
+            confidence: 0.11,
+            danger: 0.72,
+            dangerLabel: { true: 'Hráč je v ohrožení', false: 'Hráč je v bezpečí' },
+          },
+        },
+      }),
+    );
+    fixture.detectChanges();
+
+    expect(el.textContent).not.toContain('záložní klasická AI');
+    expect(el.textContent).toContain('Rozhodnutí modelu');
+    expect(el.textContent).toContain('Útok');
+    expect(el.textContent).toContain('41 %');
+    expect(el.textContent).toContain('Speciální útok');
+    expect(el.textContent).toContain('36 %');
+    expect(el.textContent).toContain('Léčení');
+    expect(el.textContent).toContain('24 %');
+    expect(el.textContent).toContain('Jistota');
+    expect(el.textContent).toContain('11 %');
+    expect(el.textContent).toContain('Hráč je v ohrožení');
+    expect(el.textContent).toContain('Protivník váhá: útok 41 %, speciální 36 %.');
+  });
+
+  it('does not mark a successful decision move as a fallback', () => {
+    flushModels();
+    startBattle();
+
+    clickButton('.btn-attack');
+    const request = http.expectOne({ method: 'POST', url: '/api/games/rpg/rpg-1/action' });
+    request.flush(
+      battleState({
+        model: 'd1:latest',
+        opponentMode: 'decision',
+        revision: 1,
+        round: 1,
+        lastOpponentMove: {
+          source: 'decision',
+          model: 'd1:latest',
           action: 'special',
           taunt: 'Cítíš tu energii?',
           fallbackReason: null,
+          decision: null,
         },
       }),
     );

@@ -1,13 +1,20 @@
 import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { LlmModelInfo, RpgAction, RpgOpponentMove, RpgState } from '../../models/game.models';
+import {
+  LlmModelInfo,
+  RpgAction,
+  RpgDecisionDetail,
+  RpgOpponentMove,
+  RpgState,
+} from '../../models/game.models';
 import { ApiError, GameApiService } from '../../services/game-api.service';
 import { GameSession } from '../../services/game-session';
 
 type ModelsStatus = 'loading' | 'ready' | 'unavailable';
 
 export const CLASSIC_OPPONENT = '__classic__';
+export const DECISION_CAPABILITY = 'decision';
 
 @Component({
   selector: 'app-rpg-game',
@@ -37,7 +44,12 @@ export class RpgGame {
   protected readonly modelWarning = computed(() => this.selectedModel() !== CLASSIC_OPPONENT);
   protected readonly selectedModelMissing = computed(
     () =>
-      this.modelWarning() && !this.models().some((model) => model.name === this.selectedModel()),
+      this.modelWarning() &&
+      !this.decisionModels().some((model) => model.name === this.selectedModel()),
+  );
+
+  protected readonly decisionModels = computed<LlmModelInfo[]>(() =>
+    this.models().filter((model) => (model.capabilities ?? []).includes(DECISION_CAPABILITY)),
   );
 
   protected readonly classicValue = CLASSIC_OPPONENT;
@@ -53,6 +65,11 @@ export class RpgGame {
     }
     const move = current.lastOpponentMove;
     return move && move.source === 'heuristic' ? move : null;
+  });
+
+  protected readonly decisionDetail = computed<RpgDecisionDetail | null>(() => {
+    const current = this.view();
+    return current?.lastOpponentMove?.decision ?? null;
   });
 
   protected readonly reversedLog = computed(() => {
@@ -140,6 +157,46 @@ export class RpgGame {
 
   protected opponentLabel(state: RpgState): string {
     return state.model ?? 'Klasická AI';
+  }
+
+  protected opponentModeLabel(state: RpgState): string {
+    return state.opponentMode === 'decision' ? 'Decision model' : 'Klasická AI';
+  }
+
+  protected decisionActionLabel(action: string): string {
+    switch (action) {
+      case 'attack':
+        return 'Útok';
+      case 'special':
+        return 'Speciální útok';
+      case 'heal':
+        return 'Léčení';
+      default:
+        return action;
+    }
+  }
+
+  protected probabilityEntries(
+    detail: RpgDecisionDetail,
+  ): { action: string; label: string; value: number }[] {
+    return Object.entries(detail.probabilities ?? {})
+      .map(([action, value]) => ({ action, label: this.decisionActionLabel(action), value }))
+      .sort((a, b) => b.value - a.value);
+  }
+
+  protected percent(value: number): string {
+    return `${Math.round(value * 100)} %`;
+  }
+
+  protected dangerLabel(detail: RpgDecisionDetail): string | null {
+    if (detail.danger === null || detail.danger === undefined) {
+      return null;
+    }
+    const labels = detail.dangerLabel;
+    if (detail.danger >= 0.5) {
+      return labels?.true ?? 'Hráč je v ohrožení';
+    }
+    return labels?.false ?? 'Hráč je v bezpečí';
   }
 
   protected formatSize(bytes: number): string {

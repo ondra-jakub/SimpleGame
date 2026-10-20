@@ -63,17 +63,35 @@ export interface TwentyState {
 
 export type RpgAction = 'attack' | 'special' | 'heal';
 
+export type RpgOpponentSource = 'classic' | 'decision' | 'heuristic';
+
+export type RpgOpponentMode = 'classic' | 'decision';
+
+export interface RpgDangerLabels {
+  true: string | null;
+  false: string | null;
+}
+
+export interface RpgDecisionDetail {
+  probabilities: Record<string, number>;
+  confidence: number;
+  danger: number | null;
+  dangerLabel: RpgDangerLabels;
+}
+
 export interface RpgOpponentMove {
-  source: 'llm' | 'heuristic';
+  source: RpgOpponentSource;
   model: string | null;
   action: RpgAction;
   taunt: string | null;
   fallbackReason: string | null;
+  decision: RpgDecisionDetail | null;
 }
 
 export interface RpgState {
   id: string;
   model: string | null;
+  opponentMode: RpgOpponentMode;
   playerHp: number;
   opponentHp: number;
   playerCooldown: number;
@@ -89,6 +107,7 @@ export interface RpgState {
 export interface LlmModelInfo {
   name: string;
   sizeBytes: number;
+  capabilities: string[];
 }
 
 export interface LlmModelsResponse {

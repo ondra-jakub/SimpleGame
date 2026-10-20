@@ -2,7 +2,7 @@
 
 Pět jednoduchých her proti serveru, vše česky na jedné stránce: hádání čísla, šibenice,
 hádání slova (Wordle), dvacet otázek s učením a RPG souboj, ve kterém může protivníka
-ovládat jazykový model z Ollamy.
+ovládat decision model z Ollamy.
 
 Stack: **ASP.NET Core (`.NET 10`, bez NuGet balíčků)** na pozadí a **Angular 22**
 (standalone komponenty, signals) na papíře. Ollama je volitelná — bez ní hraje
@@ -16,7 +16,7 @@ protivník klasická heuristická AI.
 | **Šibenice** | Tajné české slovo z kategorie, osm chyb (progresivní SVG). Tip bez diakritiky odhalí i písmeno s diakritikou („s“ odhalí „Š“). Tajné slovo se prozradí až na konci. |
 | **Hádej slovo** | Wordle ve stylu: 5 písmen, 6 pokusů, zpětná vazba po pozicích se správným počítáním duplicit (dvě stejná písmena ≠ dvě žlutá tajemství). |
 | **20 otázek** | Server se ptá ano/ne, poslední položkou je i jeho tip (limit 20). Když se splete, naučíte ho: nový pojem + otázka, která je pro něj ANO a pro marný tip NE. Naučený strom zůstává (v paměti serveru) i pro další hry. |
-| **Souboj (RPG)** | Tla na tlač: útok (10–18), speciální útok (20–30, 30 % minout, cooldown 3 kola) a léčení (15–25). Protivník: klasická heuristika nebo model z Ollamy (tah + průpovídka), který při selhání čitelně spadne na heuristiku. |
+| **Souboj (RPG)** | Tla na tlač: útok (10–18), speciální útok (20–30, 30 % minout, cooldown 3 kola) a léčení (15–25). Protivník: klasická heuristika nebo decision model z Ollamy (tah + rozdělení pravděpodobností), který při selhání čitelně spadne na heuristiku. |
 
 ![Šibenice](docs/screenshots/sibenice.png)
 
@@ -39,19 +39,29 @@ Pak stačí otevřít <http://localhost:4200>.
 
 ### Ollama (volitelné)
 
-API čte nainstalované modely z Ollamy (`GET /api/llm/models`) a souboje s modelem
-zasílá přes `POST /api/chat` s vynuceným schématem odpovědi (`action` + `taunt`),
-bez streamování a bez „thinking“ bloků. Nastavení je v `SimpleGame/appsettings.json`
-(sekce `Ollama`: `BaseUrl`, časové limity 3 s pro seznam modelů a 45 s pro tah,
-`KeepAlive`). Zásadní chování:
+API čte nainstalované modely z Ollamy (`GET /api/llm/models`) včetně jejich
+capability (`decision`, `vision`, …) a souboje s protivníkem rozhodujícím přes decision
+režim zasílá na `POST /v1/systemone`. Dotaz obsahuje herní stav (kolo, HP, cooldowny,
+poslední akce hráče a poslední tři řádky logu) a dvě pojmenované otázky:
+
+- `akce` = `choice` s kritérii jen pro **povolené akce** (`attack` / `special` / `heal`),
+  ze kterých model vybere jednu a vrátí i rozdělení pravděpodobností a jistotu;
+- `ohrozeni` = `noul`, tedy „je hráč v ohrožení?“ s pravděpodobností.
+
+Rozhodnutí má vždy podobu `{ "source": "classic" | "decision" | "heuristic", … }` a
+průpovídku skládá server ze šablony podle jistoty a nálady — decision model text negeneruje.
+Chat modely (`/api/chat`) jako protivník **nejsou použitelné**; API chat cestu vůbec
+neobsahuje. Nastavení je v `SimpleGame/appsettings.json` (sekce `Ollama`: `BaseUrl`,
+časové limity 3 s pro seznam modelů a 10 s pro rozhodnutí, `KeepAlive`). Zásadní chování:
 
 - seznam modelů se kešuje (30 s dostupná Ollama, 3 s nedostupná, tlačítko v UI aktualizuje hned);
-- do souboje lze zvolit jen model ze seznamu; nedostupná Ollama = `503`,
-  neexistující model = `400`;
-- když model někdy neodpoví, vrátí neplatný tah, minout cooldown nebo chybí,
+- v UI se nabízí jen modely s capability `decision`; klasická AI je vždy k dispozici;
+- do souboje lze zvolit jen decision model ze seznamu; nedostupná Ollama = `503`,
+  neexistující model = `400`, model bez capability `decision` = `400`;
+- když model neodpoví, vrátí akci mimo povolené akce nebo vrátí neplatné rozhodnutí,
   tah čitelně převezme klasická heuristika (v protokolu souboje je důvod);
-- embeddingový model (např. `nomic-embed-text`) nemá chat rozhraní — fallback
-  se ukáže se stručným vysvětlením.
+- server rozlišuje `HTTP 400` (model neumí decision režim), `HTTP 404` (model není
+  nainstalovaný) a timeout — u všech případů je v logu konkrétní důvod fallbacku.
 
 ### Docker
 
@@ -64,8 +74,8 @@ Ollama se ze kontejneru hledá na `host.docker.internal:11434` (lze přepsat pro
 ## Testy
 
 ```bash
-dotnet test SimpleGame.slnx                  # 114 backendových testů (xUnit)
-npm test --prefix simple-game-ui             # 19 UI testů (vitest, spustí jednou)
+dotnet test SimpleGame.slnx                  # 123 backendových testů (xUnit)
+npm test --prefix simple-game-ui             # 22 UI testů (vitest, spustí jednou)
 ```
 
 ![Hádej slovo](docs/screenshots/hadej-slovo.png)
@@ -79,7 +89,7 @@ hra, 409 konflikt, 429 limit relací, 503 nedostupná Ollama/zastavující serve
 | Metoda | Cesta | Popis |
 | --- | --- | --- |
 | GET | `/api/health` | zdravotní kontrola |
-| GET | `/api/llm/models` | seznam modelů Ollamy |
+| GET | `/api/llm/models` | seznam modelů Ollamy včetně capability |
 | POST | `/api/games/number/start`, `/number/{id}/guess` | nová hra a tip |
 | POST | `/api/games/hangman/start`, `/hangman/{id}/guess` | nová hra a písmeno |
 | POST | `/api/games/word/start`, `/word/{id}/guess` | nová hra a tip |
@@ -94,6 +104,9 @@ hra, 409 konflikt, 429 limit relací, 503 nedostupná Ollama/zastavující serve
 - RPG kolo je **atomické**: tah hráče i tah protivníka se propočítají na kopii stavu
   a potvrdí najednou (`revision`); GET během kola vrací poslední potvrzený stav,
   souběh tlačítek řeší 409 a UI po selhání sítě nabízí obnovu stavem, ne opakovaný POST.
+- Protivník v RPG má dva režimy: `classic` (heuristika, Ollama se vůbec nedotkne) a
+  `decision` (decision model z Ollamy). Režim určuje server při startu souboje podle
+  capability modelu; při selhání rozhodnutí přebírá heuristika a v logu je uveden důvod.
 - Dvacet otázek sdílí jeden strom: každá hra hraje na neměnném snímku, učení
   publikuje nový kořen a současná lekce u stejného listu dostane 409, aby si hry
   nepřepisovaly lekce navzájem.

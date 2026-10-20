@@ -18,6 +18,7 @@ public sealed class RpgTests
         private readonly CancellationTokenSource started = new();
         private readonly CancellationTokenSource stopping = new();
         private readonly CancellationTokenSource stopped = new();
+        public CancellationToken Token => started.Token;
         public CancellationToken ApplicationStarted => started.Token;
         public CancellationToken ApplicationStopping => stopping.Token;
         public CancellationToken ApplicationStopped => stopped.Token;
@@ -55,7 +56,7 @@ public sealed class RpgTests
 
     private sealed class FakeOllama : IOllamaClient
     {
-        public ModelsView Models { get; set; } = new(true, [new ModelInfo("llama3", 42)]);
+        public ModelsView Models { get; set; } = new(true, [new ModelInfo("d1:latest", 42, ["decision", "vision"])]);
         public OpponentDecision Decision { get; set; } = new("attack", "Jsem tu!");
         public TaskCompletionSource<OpponentDecision>? Blocker { get; set; }
         public int ModelsCalls { get; private set; }
@@ -71,7 +72,7 @@ public sealed class RpgTests
             return Task.FromResult(Models);
         }
 
-        public Task<OpponentDecision> ChooseMoveAsync(string model, OpponentContext context, CancellationToken cancellationToken)
+        public Task<OpponentDecision> ChooseDecisionMoveAsync(string model, OpponentContext context, CancellationToken cancellationToken)
         {
             ChooseCalls++;
             Contexts.Add(context);
@@ -105,6 +106,7 @@ public sealed class RpgTests
         var view = await Start(engine);
         Assert.NotEqual(Guid.Empty, view.Id);
         Assert.Null(view.Model);
+        Assert.Equal("classic", view.OpponentMode);
         Assert.Equal(100, view.PlayerHp);
         Assert.Equal(100, view.OpponentHp);
         Assert.Equal(0, view.PlayerCooldown);
@@ -120,13 +122,35 @@ public sealed class RpgTests
     }
 
     [Fact]
-    public async Task Start_WithModelFromCatalog_AssignsModelToSession()
+    public async Task Start_WithDecisionModel_SwitchesSessionToDecisionMode()
     {
         var (engine, _, ollama, _, _) = Create();
-        var view = await Start(engine, "llama3");
-        Assert.Equal("llama3", view.Model);
+        var view = await Start(engine, "d1:latest");
+        Assert.Equal("d1:latest", view.Model);
+        Assert.Equal("decision", view.OpponentMode);
         Assert.Equal(1, ollama.ModelsCalls);
         Assert.False(ollama.LastRefresh);
+    }
+
+    [Fact]
+    public async Task Start_WithModelWithoutDecisionCapability_Rejected400()
+    {
+        var (engine, _, ollama, _, _) = Create();
+        ollama.Models = new ModelsView(true, [new ModelInfo("qwen3.5:0.8b", 42, ["completion", "vision"])]);
+        var ex = await Assert.ThrowsAsync<GameException>(() => Start(engine, "qwen3.5:0.8b"));
+        Assert.Equal(400, ex.StatusCode);
+        Assert.Equal("invalid_input", ex.Code);
+        Assert.Equal(0, ollama.ChooseCalls);
+    }
+
+    [Fact]
+    public async Task Start_WithModelWithoutCapabilityInformation_Rejected400()
+    {
+        var (engine, _, ollama, _, _) = Create();
+        ollama.Models = new ModelsView(true, [new ModelInfo("legacy:model", 42)]);
+        var ex = await Assert.ThrowsAsync<GameException>(() => Start(engine, "legacy:model"));
+        Assert.Equal(400, ex.StatusCode);
+        Assert.Equal("invalid_input", ex.Code);
     }
 
     [Fact]
@@ -155,7 +179,7 @@ public sealed class RpgTests
     {
         var (engine, _, ollama, _, _) = Create();
         ollama.Models = new ModelsView(false, [], "Ollama neni dostupna.");
-        var ex = await Assert.ThrowsAsync<GameException>(() => Start(engine, "llama3"));
+        var ex = await Assert.ThrowsAsync<GameException>(() => Start(engine, "d1:latest"));
         Assert.Equal(503, ex.StatusCode);
         Assert.Equal("ollama_unavailable", ex.Code);
     }
@@ -233,7 +257,8 @@ public sealed class RpgTests
         Assert.False(view.InProgress);
         Assert.Equal("playing", view.Status);
         Assert.Equal((IEnumerable<string>)["Kolo 1", "Hrac: utok za 10 HP.", "Protivnik: utok za 8 HP."], view.Log);
-        Assert.Equal(new OpponentMove("heuristic", null, "attack", null, null), view.LastOpponentMove);
+        Assert.Equal("classic", view.LastOpponentMove!.Source);
+        Assert.Null(view.LastOpponentMove.Decision);
     }
 
     [Fact]
@@ -269,7 +294,7 @@ public sealed class RpgTests
         var (engine, random, ollama, _, _) = Create();
         ollama.Decision = new OpponentDecision("heal");
         random.Ints(12, 21, 20);
-        var start = await Start(engine, "llama3");
+        var start = await Start(engine, "d1:latest");
         var view = await Act(engine, start.Id, "attack", 0);
         Assert.Equal(100, view.OpponentHp);
         Assert.Contains("Protivnik se leci: +10 HP.", view.Log);
@@ -292,7 +317,7 @@ public sealed class RpgTests
     public async Task Act_SpecialCooldown_ProgressesThreeTwoOneZero()
     {
         var (engine, _, ollama, _, _) = Create();
-        var start = await Start(engine, "llama3");
+        var start = await Start(engine, "d1:latest");
 
         var view = await Act(engine, start.Id, "special", 0);
         Assert.Equal(3, view.PlayerCooldown);
@@ -318,7 +343,7 @@ public sealed class RpgTests
     public async Task Act_OpponentSpecialCooldown_ProgressesAndRestrictsAllowedActions()
     {
         var (engine, _, ollama, _, _) = Create();
-        var start = await Start(engine, "llama3");
+        var start = await Start(engine, "d1:latest");
         ollama.Decision = new OpponentDecision("special", "Priprav se!");
 
         var view = await Act(engine, start.Id, "attack", 0);
@@ -343,7 +368,7 @@ public sealed class RpgTests
     public async Task Act_BothSidesSpecial_SameRound_BothCooldownsTickTogether()
     {
         var (engine, random, ollama, _, _) = Create();
-        var start = await Start(engine, "llama3");
+        var start = await Start(engine, "d1:latest");
         ollama.Decision = new OpponentDecision("special");
         random.Doubles(0.0, 0.9);
 
@@ -362,7 +387,7 @@ public sealed class RpgTests
     public async Task Act_SpecialWhileOnCooldown_RejectedWithoutAnyMutation()
     {
         var (engine, _, ollama, _, _) = Create();
-        var start = await Start(engine, "llama3");
+        var start = await Start(engine, "d1:latest");
         await Act(engine, start.Id, "special", 0);
         var before = engine.Get(start.Id);
         var calls = ollama.ChooseCalls;
@@ -385,11 +410,14 @@ public sealed class RpgTests
     }
 
     [Fact]
-    public async Task Act_LlmMove_UsesDecisionTauntAndServerContext()
+    public async Task Act_DecisionMove_UsesServerTauntAndContext()
     {
         var (engine, _, ollama, _, _) = Create();
-        ollama.Decision = new OpponentDecision("special", "Nazdar!");
-        var start = await Start(engine, "llama3");
+        var detail = new DecisionDetail(
+            new Dictionary<string, double> { ["attack"] = 0.4, ["special"] = 0.35, ["heal"] = 0.25 },
+            0.11, 0.72, "Hráč je v ohrožení", "Hráč je v bezpečí");
+        ollama.Decision = new OpponentDecision("special", "Protivnik vaha: special 35 %.", Decision: detail);
+        var start = await Start(engine, "d1:latest");
         var view = await Act(engine, start.Id, "attack", 0);
 
         Assert.Equal(1, ollama.ChooseCalls);
@@ -398,32 +426,59 @@ public sealed class RpgTests
         Assert.Equal(90, context.OpponentHp);
         Assert.Equal(1, context.Round);
         Assert.Equal(0, context.OpponentCooldown);
+        Assert.Equal(0, context.PlayerCooldown);
         Assert.Equal("attack", context.LastPlayerAction);
         Assert.Equal((IEnumerable<string>)["attack", "special", "heal"], context.AllowedActions);
+        Assert.NotEmpty(context.RecentLog);
 
-        Assert.Equal(new OpponentMove("llm", "llama3", "special", "Nazdar!", null), view.LastOpponentMove);
+        Assert.Equal("decision", view.LastOpponentMove!.Source);
+        Assert.Equal("d1:latest", view.LastOpponentMove.Model);
+        Assert.Equal("special", view.LastOpponentMove.Action);
+        Assert.Equal("Protivnik vaha: special 35 %.", view.LastOpponentMove.Taunt);
+        Assert.Null(view.LastOpponentMove.FallbackReason);
+        Assert.NotNull(view.LastOpponentMove.Decision);
+        Assert.Equal(0.11, view.LastOpponentMove.Decision!.Confidence, 3);
+        Assert.Equal(0.72, view.LastOpponentMove.Decision.Danger!.Value, 3);
+        Assert.Equal("Hráč je v ohrožení", view.LastOpponentMove.Decision.DangerLabel.@true);
         Assert.Equal(82, view.PlayerHp);
         Assert.Equal(3, view.OpponentCooldown);
         Assert.Contains("Protivnik: special za 18 HP.", view.Log);
-        Assert.Contains("Protivnik: Nazdar!", view.Log);
+        Assert.Contains("Protivnik: Protivnik vaha: special 35 %.", view.Log);
     }
 
     [Fact]
-    public async Task Act_LlmFallback_CompletesExactlyOneHeuristicTurn()
+    public async Task Act_DecisionFallback_CompletesExactlyOneHeuristicTurn()
     {
         var (engine, _, ollama, _, _) = Create();
-        var reason = "Model neodpovedel vcas; tah prevzala klasicka AI.";
+        var reason = "Model neodpověděl včas; tah převzala klasická AI.";
         ollama.Decision = new OpponentDecision(null, FallbackReason: reason);
-        var start = await Start(engine, "llama3");
+        var start = await Start(engine, "d1:latest");
         var view = await Act(engine, start.Id, "attack", 0);
 
         Assert.Equal(1, ollama.ChooseCalls);
-        Assert.Equal(new OpponentMove("heuristic", "llama3", "attack", null, reason), view.LastOpponentMove);
+        Assert.Equal("heuristic", view.LastOpponentMove!.Source);
+        Assert.Equal("d1:latest", view.LastOpponentMove.Model);
+        Assert.Equal("attack", view.LastOpponentMove.Action);
+        Assert.Equal(reason, view.LastOpponentMove.FallbackReason);
+        Assert.Null(view.LastOpponentMove.Decision);
         Assert.Equal(1, view.Log.Count(entry => entry.StartsWith("Nahradni AI:")));
         Assert.Contains("Nahradni AI: " + reason, view.Log);
         Assert.Equal(92, view.PlayerHp);
         Assert.Equal(90, view.OpponentHp);
         Assert.Equal(1, view.Revision);
+    }
+
+    [Fact]
+    public async Task Act_ClassicalAi_NeverCallsDecisionModel()
+    {
+        var (engine, _, ollama, _, _) = Create();
+        var start = await Start(engine);
+        var view = await Act(engine, start.Id, "attack", 0);
+        Assert.Equal(0, ollama.ChooseCalls);
+        Assert.Equal(0, ollama.ModelsCalls);
+        Assert.Equal("classic", view.LastOpponentMove!.Source);
+        Assert.Null(view.LastOpponentMove.Model);
+        Assert.Null(view.LastOpponentMove.Taunt);
     }
 
     [Fact]
@@ -439,16 +494,16 @@ public sealed class RpgTests
         random.Doubles(0.0);
         view = await Act(engine, start.Id, "attack", 4);
         Assert.Equal("heal", view.LastOpponentMove!.Action);
-        Assert.Equal("heuristic", view.LastOpponentMove.Source);
+        Assert.Equal("classic", view.LastOpponentMove.Source);
         Assert.Equal(22, view.OpponentHp);
     }
 
     [Fact]
-    public async Task Act_LethalPlayerAttack_SkipsLlmAndWinsGame()
+    public async Task Act_LethalPlayerAttack_SkipsDecisionModelAndWinsGame()
     {
         var (engine, random, ollama, _, _) = Create();
         random.Ints(10, 19, 18, 18, 18, 18, 18, 18);
-        var start = await Start(engine, "llama3");
+        var start = await Start(engine, "d1:latest");
         RpgView view = start;
         for (var revision = 0; revision < 5; revision++)
             view = await Act(engine, start.Id, "attack", revision);
@@ -472,10 +527,10 @@ public sealed class RpgTests
     }
 
     [Fact]
-    public async Task Act_ConcurrentSameRevision_SecondGets409AndExactlyOneLlmCallCommits()
+    public async Task Act_ConcurrentSameRevision_SecondGets409AndExactlyOneDecisionCallCommits()
     {
         var (engine, _, ollama, _, _) = Create();
-        var start = await Start(engine, "llama3");
+        var start = await Start(engine, "d1:latest");
         ollama.Blocker = new TaskCompletionSource<OpponentDecision>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var first = engine.ActAsync(start.Id, new RpgActionRequest("attack", 0), CancellationToken.None);
@@ -512,7 +567,7 @@ public sealed class RpgTests
     public async Task Get_WhileTurnInProgress_ShowsOnlyConfirmedPreTurnState()
     {
         var (engine, _, ollama, _, _) = Create();
-        var start = await Start(engine, "llama3");
+        var start = await Start(engine, "d1:latest");
         ollama.Blocker = new TaskCompletionSource<OpponentDecision>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var pending = engine.ActAsync(start.Id, new RpgActionRequest("attack", 0), CancellationToken.None);
@@ -538,7 +593,7 @@ public sealed class RpgTests
     public async Task Act_CallerCancellation_DiscardsPartialTurn()
     {
         var (engine, _, ollama, _, _) = Create();
-        var start = await Start(engine, "llama3");
+        var start = await Start(engine, "d1:latest");
         ollama.Blocker = new TaskCompletionSource<OpponentDecision>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var cts = new CancellationTokenSource();
 
@@ -565,7 +620,7 @@ public sealed class RpgTests
     public async Task Act_ApplicationStopping_DiscardsPartialTurn()
     {
         var (engine, _, ollama, lifetime, _) = Create();
-        var start = await Start(engine, "llama3");
+        var start = await Start(engine, "d1:latest");
         ollama.Blocker = new TaskCompletionSource<OpponentDecision>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var pending = engine.ActAsync(start.Id, new RpgActionRequest("attack", 0), CancellationToken.None);

@@ -42,13 +42,22 @@ public sealed class OllamaTests
         }
     }
 
-    private const string TagsJson = "{\"models\":[{\"name\":\"llama3\",\"size\":123},{\"name\":\"llama3\",\"size\":999},{\"name\":\"alpha\",\"size\":5}]}";
+    private const string TagsJson =
+        "{\"models\":[{\"name\":\"llama3\",\"size\":123},{\"name\":\"llama3\",\"size\":999},{\"name\":\"alpha\",\"size\":5}]}";
+    private const string TagsWithCapabilitiesJson =
+        "{\"models\":[{\"name\":\"d1:latest\",\"size\":3730544597,\"capabilities\":[\"decision\",\"vision\"]}," +
+        "{\"name\":\"qwen3.5:0.8b\",\"size\":520000000,\"capabilities\":[\"completion\",\"vision\",\"tools\",\"thinking\"]}]}";
     private const string EmptyTagsJson = "{\"models\":[]}";
     private static readonly OpponentContext FullContext = new(100, 90, 1, 0, ["attack", "special", "heal"], "attack");
 
-    private static string ChatResponse(string contentJson) =>
-        "{\"model\":\"llama3\",\"message\":{\"role\":\"assistant\",\"thinking\":\"skryte uvazovani, ktere se nesmi pouzit\",\"content\":" +
-        JsonSerializer.Serialize(contentJson) + "},\"done\":true}";
+    private static string DecisionResponse(
+        string choice = "special",
+        string probabilities = "{\"attack\":0.407,\"special\":0.358,\"heal\":0.235}",
+        double confidence = 0.11,
+        double noul = 0.72) =>
+        "{\"model\":\"d1:latest\",\"answers\":{\"akce\":{\"type\":\"choice\",\"choice\":\"" + choice + "\"," +
+        "\"probabilities\":" + probabilities + ",\"confidence\":" + confidence.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+        "},\"ohrozeni\":{\"type\":\"noul\",\"noul\":" + noul.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}},\"usage\":{\"input_tokens\":464}}";
 
     private static (OllamaClient Client, ScriptedHandler Handler, FakeClock Clock, ModelCatalogCache Cache) Create(OllamaOptions? options = null)
     {
@@ -85,8 +94,36 @@ public sealed class OllamaTests
         var view = await client.GetModelsAsync(false, CancellationToken.None);
         Assert.True(view.Available);
         Assert.Equal(2, view.Models.Length);
-        Assert.Equal(new ModelInfo("alpha", 5), view.Models[0]);
-        Assert.Equal(new ModelInfo("llama3", 123), view.Models[1]);
+        Assert.Equal("alpha", view.Models[0].Name);
+        Assert.Equal(5, view.Models[0].SizeBytes);
+        Assert.Equal("llama3", view.Models[1].Name);
+        Assert.Equal(123, view.Models[1].SizeBytes);
+    }
+
+    [Fact]
+    public async Task Tags_MissingCapabilitiesField_YieldsEmptyCapabilityList()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson(TagsJson);
+        var view = await client.GetModelsAsync(false, CancellationToken.None);
+        Assert.All(view.Models, model => Assert.Empty(model.Capabilities));
+        Assert.All(view.Models, model => Assert.False(model.Supports("decision")));
+    }
+
+    [Fact]
+    public async Task Tags_ParsesCapabilities()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson(TagsWithCapabilitiesJson);
+        var view = await client.GetModelsAsync(false, CancellationToken.None);
+        Assert.Equal(2, view.Models.Length);
+        var d1 = view.Models.Single(m => m.Name == "d1:latest");
+        Assert.Equal(["decision", "vision"], d1.Capabilities);
+        Assert.True(d1.Supports("decision"));
+        Assert.True(d1.Supports("Decision"));
+        var qwen = view.Models.Single(m => m.Name == "qwen3.5:0.8b");
+        Assert.Equal(["completion", "thinking", "tools", "vision"], qwen.Capabilities);
+        Assert.False(qwen.Supports("decision"));
     }
 
     [Fact]
@@ -215,172 +252,212 @@ public sealed class OllamaTests
     }
 
     [Fact]
-    public async Task Chat_ValidMove_ParsesContentOnlyAndSendsRequiredSchema()
+    public async Task Decision_ValidAnswer_ReturnsActionProbabilitiesConfidenceAndMood()
     {
         var (client, handler, _, _) = Create();
-        handler.RespondWithJson(ChatResponse("{\"action\":\"special\",\"taunt\":\"Nazdar!\"}"));
-        var decision = await client.ChooseMoveAsync("llama3", FullContext, CancellationToken.None);
+        handler.RespondWithJson(DecisionResponse());
+        var decision = await client.ChooseDecisionMoveAsync("d1:latest", FullContext, CancellationToken.None);
+
         Assert.Equal("special", decision.Action);
-        Assert.Equal("Nazdar!", decision.Taunt);
         Assert.Null(decision.FallbackReason);
+        Assert.NotNull(decision.Decision);
+        Assert.Equal(0.407, decision.Decision!.Probabilities["attack"], 3);
+        Assert.Equal(0.358, decision.Decision.Probabilities["special"], 3);
+        Assert.Equal(0.235, decision.Decision.Probabilities["heal"], 3);
+        Assert.Equal(0.11, decision.Decision.Confidence, 3);
+        Assert.Equal(0.72, decision.Decision.Danger!.Value, 3);
+        Assert.Equal("Hráč je v ohrožení", decision.Decision.DangerLabel.@true);
+        Assert.Equal("Hráč je v bezpečí", decision.Decision.DangerLabel.@false);
+        Assert.False(string.IsNullOrWhiteSpace(decision.Taunt));
+        Assert.Contains("útok 41 %", decision.Taunt);
+        Assert.Contains("speciální 36 %", decision.Taunt);
+    }
+
+    [Fact]
+    public async Task Decision_SendsNamedQuestionsObjectStateAndKeepAlive()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson(DecisionResponse());
+        var context = FullContext with { PlayerCooldown = 2, RecentLog = ["Kolo 1", "Hrac: utok za 14 HP."] };
+        await client.ChooseDecisionMoveAsync("d1:latest", context, CancellationToken.None);
+
         Assert.Equal(1, handler.Calls);
-        Assert.Equal("POST http://ollama/api/chat", handler.Requests[0]);
+        Assert.Equal("POST http://ollama/v1/systemone", handler.Requests[0]);
 
         using var body = JsonDocument.Parse(handler.Bodies[0]!);
         var root = body.RootElement;
-        Assert.Equal("llama3", root.GetProperty("model").GetString());
+        Assert.Equal("d1:latest", root.GetProperty("model").GetString());
         Assert.False(root.GetProperty("stream").GetBoolean());
-        Assert.False(root.GetProperty("think").GetBoolean());
         Assert.Equal("10m", root.GetProperty("keep_alive").GetString());
-        Assert.Equal(256, root.GetProperty("options").GetProperty("num_predict").GetInt32());
-        var format = root.GetProperty("format");
-        Assert.Equal("object", format.GetProperty("type").GetString());
+
+        var state = root.GetProperty("state");
+        Assert.Equal(1, state.GetProperty("round").GetInt32());
+        Assert.Equal(100, state.GetProperty("playerHp").GetInt32());
+        Assert.Equal(90, state.GetProperty("opponentHp").GetInt32());
+        Assert.Equal(2, state.GetProperty("playerCooldown").GetInt32());
+        Assert.Equal(0, state.GetProperty("opponentCooldown").GetInt32());
+        Assert.Equal("attack", state.GetProperty("lastPlayerAction").GetString());
         Assert.Equal(new string?[] { "attack", "special", "heal" },
-            format.GetProperty("properties").GetProperty("action").GetProperty("enum").EnumerateArray().Select(e => e.GetString()));
-        Assert.Equal(240, format.GetProperty("properties").GetProperty("taunt").GetProperty("maxLength").GetInt32());
-        Assert.Equal(new string?[] { "action", "taunt" }, format.GetProperty("required").EnumerateArray().Select(e => e.GetString()));
-        Assert.False(format.GetProperty("additionalProperties").GetBoolean());
-        var messages = root.GetProperty("messages").EnumerateArray().ToArray();
-        Assert.Equal(2, messages.Length);
-        Assert.Equal("system", messages[0].GetProperty("role").GetString());
-        Assert.Contains("protivnik", messages[0].GetProperty("content").GetString());
-        Assert.Equal("user", messages[1].GetProperty("role").GetString());
-        using var contextJson = JsonDocument.Parse(messages[1].GetProperty("content").GetString()!);
-        var context = contextJson.RootElement;
-        Assert.Equal(100, context.GetProperty("playerHp").GetInt32());
-        Assert.Equal(90, context.GetProperty("opponentHp").GetInt32());
-        Assert.Equal(1, context.GetProperty("round").GetInt32());
-        Assert.Equal(0, context.GetProperty("opponentCooldown").GetInt32());
-        Assert.Equal(new string?[] { "attack", "special", "heal" }, context.GetProperty("allowedActions").EnumerateArray().Select(e => e.GetString()));
-        Assert.Equal("attack", context.GetProperty("lastPlayerAction").GetString());
+            state.GetProperty("allowedActions").EnumerateArray().Select(e => e.GetString()));
+        Assert.Equal(new string?[] { "Kolo 1", "Hrac: utok za 14 HP." },
+            state.GetProperty("recentLog").EnumerateArray().Select(e => e.GetString()));
+
+        var questions = root.GetProperty("questions");
+        Assert.Equal(JsonValueKind.Object, questions.ValueKind);
+        var akce = questions.GetProperty("akce");
+        Assert.Equal("choice", akce.GetProperty("type").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(akce.GetProperty("instructions").GetString()));
+        var criteria = akce.GetProperty("criteria");
+        Assert.Equal(JsonValueKind.Object, criteria.ValueKind);
+        Assert.Equal(new string?[] { "attack", "special", "heal" }, criteria.EnumerateObject().Select(e => e.Name));
+        Assert.All(criteria.EnumerateObject(), entry => Assert.False(string.IsNullOrWhiteSpace(entry.Value.GetString())));
+
+        var ohrozeni = questions.GetProperty("ohrozeni");
+        Assert.Equal("noul", ohrozeni.GetProperty("type").GetString());
+        var dangerCriteria = ohrozeni.GetProperty("criteria");
+        Assert.Equal(JsonValueKind.Object, dangerCriteria.ValueKind);
+        Assert.Equal(new string?[] { "true", "false" }, dangerCriteria.EnumerateObject().Select(e => e.Name));
     }
 
     [Fact]
-    public async Task Chat_MissingOrEmptyContent_FallsBack()
+    public async Task Decision_CriteriaContainOnlyAllowedActions()
     {
         var (client, handler, _, _) = Create();
-        handler.RespondWithJson(ChatResponse(""));
-        var first = await client.ChooseMoveAsync("llama3", FullContext, CancellationToken.None);
-        Assert.Null(first.Action);
-        Assert.Contains("neplatny tah", first.FallbackReason);
+        handler.RespondWithJson(DecisionResponse("attack", "{\"attack\":0.6,\"heal\":0.4}", 0.4, 0.1));
+        var context = FullContext with { AllowedActions = ["attack", "heal"] };
+        var decision = await client.ChooseDecisionMoveAsync("d1:latest", context, CancellationToken.None);
+        Assert.Equal("attack", decision.Action);
 
-        var (client2, handler2, _, _) = Create();
-        handler2.RespondWithJson("{\"model\":\"llama3\",\"message\":{\"role\":\"assistant\",\"content\":null},\"done\":true}");
-        var second = await client2.ChooseMoveAsync("llama3", FullContext, CancellationToken.None);
-        Assert.Null(second.Action);
-        Assert.Contains("neplatny tah", second.FallbackReason);
-
-        var (client3, handler3, _, _) = Create();
-        handler3.RespondWithJson("{\"model\":\"llama3\",\"message\":{\"role\":\"assistant\"},\"done\":true}");
-        var third = await client3.ChooseMoveAsync("llama3", FullContext, CancellationToken.None);
-        Assert.Null(third.Action);
-        Assert.Contains("neplatny tah", third.FallbackReason);
+        using var body = JsonDocument.Parse(handler.Bodies[0]!);
+        var criteria = body.RootElement.GetProperty("questions").GetProperty("akce").GetProperty("criteria");
+        Assert.Equal(new string?[] { "attack", "heal" }, criteria.EnumerateObject().Select(e => e.Name));
     }
 
     [Fact]
-    public async Task Chat_InvalidJsonContent_FallsBack()
+    public async Task Decision_ChoiceOutsideAllowedActions_FallsBack()
     {
         var (client, handler, _, _) = Create();
-        handler.RespondWithJson(ChatResponse("ahoj, jak je?"));
-        var decision = await client.ChooseMoveAsync("llama3", FullContext, CancellationToken.None);
+        handler.RespondWithJson(DecisionResponse("special"));
+        var context = FullContext with { AllowedActions = ["attack", "heal"] };
+        var decision = await client.ChooseDecisionMoveAsync("d1:latest", context, CancellationToken.None);
         Assert.Null(decision.Action);
-        Assert.Contains("neplatny tah", decision.FallbackReason);
+        Assert.Contains("neplatné rozhodnutí", decision.FallbackReason);
+        Assert.Null(decision.Decision);
     }
 
     [Fact]
-    public async Task Chat_UnknownAction_FallsBack()
+    public async Task Decision_UnknownAction_FallsBack()
     {
         var (client, handler, _, _) = Create();
-        handler.RespondWithJson(ChatResponse("{\"action\":\"flee\",\"taunt\":\"utek\"}"));
-        var decision = await client.ChooseMoveAsync("llama3", FullContext, CancellationToken.None);
+        handler.RespondWithJson(DecisionResponse("flee"));
+        var decision = await client.ChooseDecisionMoveAsync("d1:latest", FullContext, CancellationToken.None);
         Assert.Null(decision.Action);
-        Assert.Contains("neplatny tah", decision.FallbackReason);
+        Assert.Contains("neplatné rozhodnutí", decision.FallbackReason);
     }
 
     [Fact]
-    public async Task Chat_MissingOrNullTaunt_FallsBack()
+    public async Task Decision_EmptyProbabilities_FallsBack()
     {
         var (client, handler, _, _) = Create();
-        handler.RespondWithJson(ChatResponse("{\"action\":\"attack\"}"));
-        var missing = await client.ChooseMoveAsync("llama3", FullContext, CancellationToken.None);
-        Assert.Null(missing.Action);
-        Assert.Contains("neplatny tah", missing.FallbackReason);
-
-        var (client2, handler2, _, _) = Create();
-        handler2.RespondWithJson(ChatResponse("{\"action\":\"attack\",\"taunt\":null}"));
-        var nullTaunt = await client2.ChooseMoveAsync("llama3", FullContext, CancellationToken.None);
-        Assert.Null(nullTaunt.Action);
-        Assert.Contains("neplatny tah", nullTaunt.FallbackReason);
-    }
-
-    [Fact]
-    public async Task Chat_SpecialBlockedByCooldown_FallsBack()
-    {
-        var (client, handler, _, _) = Create();
-        handler.RespondWithJson(ChatResponse("{\"action\":\"special\",\"taunt\":\"bouchnu\"}"));
-        var context = FullContext with { OpponentCooldown = 2, AllowedActions = ["attack", "heal"] };
-        var decision = await client.ChooseMoveAsync("llama3", context, CancellationToken.None);
+        handler.RespondWithJson(DecisionResponse("attack", "{}", 0.5, 0.2));
+        var decision = await client.ChooseDecisionMoveAsync("d1:latest", FullContext, CancellationToken.None);
         Assert.Null(decision.Action);
-        Assert.Contains("neplatny tah", decision.FallbackReason);
+        Assert.Contains("neplatné rozhodnutí", decision.FallbackReason);
     }
 
     [Fact]
-    public async Task Chat_HttpErrorForRemovedOrEmbeddingOnlyModel_FallsBackWithStatusReason()
+    public async Task Decision_MissingAnswers_FallsBack()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson("{\"model\":\"d1:latest\"}");
+        var decision = await client.ChooseDecisionMoveAsync("d1:latest", FullContext, CancellationToken.None);
+        Assert.Null(decision.Action);
+        Assert.Contains("neplatné rozhodnutí", decision.FallbackReason);
+    }
+
+    [Fact]
+    public async Task Decision_InvalidJson_FallsBack()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson("not-json{{");
+        var decision = await client.ChooseDecisionMoveAsync("d1:latest", FullContext, CancellationToken.None);
+        Assert.Null(decision.Action);
+        Assert.Contains("neplatné rozhodnutí", decision.FallbackReason);
+    }
+
+    [Fact]
+    public async Task Decision_BadRequest_ReportsMissingDecisionSupport()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson("{\"error\":\"model is not a decision model\"}", HttpStatusCode.BadRequest);
+        var decision = await client.ChooseDecisionMoveAsync("qwen3.5:0.8b", FullContext, CancellationToken.None);
+        Assert.Null(decision.Action);
+        Assert.Contains("neumí decision režim", decision.FallbackReason);
+        Assert.Null(decision.Decision);
+    }
+
+    [Fact]
+    public async Task Decision_NotFound_ReportsMissingModel()
     {
         var (client, handler, _, _) = Create();
         handler.RespondWithJson("{\"error\":\"model not found\"}", HttpStatusCode.NotFound);
-        var removed = await client.ChooseMoveAsync("llama3", FullContext, CancellationToken.None);
-        Assert.Null(removed.Action);
-        Assert.Contains("HTTP 404", removed.FallbackReason);
-
-        handler.RespondWithJson("{\"error\":\"does not support chat\"}", HttpStatusCode.BadRequest);
-        var embeddingOnly = await client.ChooseMoveAsync("llama3", FullContext, CancellationToken.None);
-        Assert.Null(embeddingOnly.Action);
-        Assert.Contains("HTTP 400", embeddingOnly.FallbackReason);
+        var decision = await client.ChooseDecisionMoveAsync("invalid-model-zzz", FullContext, CancellationToken.None);
+        Assert.Null(decision.Action);
+        Assert.Contains("není nainstalovaný", decision.FallbackReason);
     }
 
     [Fact]
-    public async Task Chat_ConnectionFailure_FallsBackWithConnectionReason()
+    public async Task Decision_OtherHttpError_ReportsStatusCode()
+    {
+        var (client, handler, _, _) = Create();
+        handler.RespondWithJson("{\"error\":\"boom\"}", HttpStatusCode.InternalServerError);
+        var decision = await client.ChooseDecisionMoveAsync("d1:latest", FullContext, CancellationToken.None);
+        Assert.Null(decision.Action);
+        Assert.Contains("HTTP 500", decision.FallbackReason);
+    }
+
+    [Fact]
+    public async Task Decision_ConnectionFailure_FallsBackWithConnectionReason()
     {
         var (client, handler, _, _) = Create();
         handler.ThrowConnectionFailure = true;
-        var decision = await client.ChooseMoveAsync("llama3", FullContext, CancellationToken.None);
+        var decision = await client.ChooseDecisionMoveAsync("d1:latest", FullContext, CancellationToken.None);
         Assert.Null(decision.Action);
-        Assert.Contains("Spojeni s Ollamou selhalo", decision.FallbackReason);
+        Assert.Contains("Spojení s Ollamou selhalo", decision.FallbackReason);
     }
 
     [Fact]
-    public async Task Chat_Timeout_FallsBackExactlyOnce()
+    public async Task Decision_Timeout_FallsBackExactlyOnce()
     {
-        var (client, handler, _, _) = Create(new OllamaOptions { MoveTimeoutSeconds = 0.01 });
+        var (client, handler, _, _) = Create(new OllamaOptions { DecisionTimeoutSeconds = 0.01 });
         handler.Blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var decision = await client.ChooseMoveAsync("llama3", FullContext, CancellationToken.None);
+        var decision = await client.ChooseDecisionMoveAsync("d1:latest", FullContext, CancellationToken.None);
         Assert.Null(decision.Action);
-        Assert.Contains("neodpovedel vcas", decision.FallbackReason);
+        Assert.Contains("neodpověděl včas", decision.FallbackReason);
         Assert.Equal(1, handler.Calls);
     }
 
     [Fact]
-    public async Task Chat_CallerCancellation_Propagates()
+    public async Task Decision_CallerCancellation_Propagates()
     {
         var (client, handler, _, _) = Create();
         handler.Blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var cts = new CancellationTokenSource();
-        var pending = client.ChooseMoveAsync("llama3", FullContext, cts.Token);
+        var pending = client.ChooseDecisionMoveAsync("d1:latest", FullContext, cts.Token);
         Assert.False(pending.IsCompleted);
         cts.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
     }
 
     [Fact]
-    public async Task Chat_Taunt_SanitizedAndTruncatedTo240()
+    public async Task Decision_MissingDanger_KeepsDecisionWithNullDanger()
     {
         var (client, handler, _, _) = Create();
-        var raw = "\n  " + new string('a', 250) + "\t" + new string('b', 100) + "  ";
-        handler.RespondWithJson(ChatResponse(JsonSerializer.Serialize(new { action = "attack", taunt = raw })));
-        var decision = await client.ChooseMoveAsync("llama3", FullContext, CancellationToken.None);
+        handler.RespondWithJson("{\"answers\":{\"akce\":{\"choice\":\"attack\",\"probabilities\":{\"attack\":0.9},\"confidence\":0.8}}}");
+        var decision = await client.ChooseDecisionMoveAsync("d1:latest", FullContext, CancellationToken.None);
         Assert.Equal("attack", decision.Action);
-        Assert.Equal(238, decision.Taunt!.Length);
-        Assert.All(decision.Taunt, c => Assert.Equal('a', c));
+        Assert.NotNull(decision.Decision);
+        Assert.Null(decision.Decision!.Danger);
+        Assert.Equal(0.8, decision.Decision.Confidence, 3);
     }
 }
