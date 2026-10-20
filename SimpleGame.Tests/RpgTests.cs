@@ -78,6 +78,9 @@ public sealed class RpgTests
             Tokens.Add(cancellationToken);
             return Blocker is null ? Task.FromResult(Decision) : Blocker.Task.WaitAsync(cancellationToken);
         }
+
+        public Task<PiskvorkyDecision> ChooseSquareAsync(string model, PiskvorkyContext context, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("RPG tests must not play piskvorky.");
     }
 
     private sealed class OtherSession : GameSession { }

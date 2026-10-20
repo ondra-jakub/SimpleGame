@@ -23,17 +23,23 @@ describe('App', () => {
     http.verify();
   });
 
-  it('creates the shell', () => {
-    // The RPG panel mounts eagerly and asks for the model list.
-    http.expectOne('/api/llm/models').flush({ available: true, models: [] });
+  // The RPG and piškvorky panels mount eagerly and each asks for the model list.
+  function flushModelCatalogs(): void {
+    const requests = http.match('/api/llm/models');
+    expect(requests.length).toBe(2);
+    for (const request of requests) {
+      request.flush({ available: true, models: [] });
+    }
     fixture.detectChanges();
+  }
+
+  it('creates the shell', () => {
+    flushModelCatalogs();
     expect(fixture.componentInstance).toBeTruthy();
   });
 
-  it('renders all five game tabs and switches panels', () => {
-    // The RPG panel mounts eagerly and asks for the model list.
-    http.expectOne('/api/llm/models').flush({ available: true, models: [] });
-    fixture.detectChanges();
+  it('renders all six game tabs and switches panels', () => {
+    flushModelCatalogs();
 
     const tabs = Array.from(el.querySelectorAll<HTMLButtonElement>('.tab'));
     expect(tabs.map((tab) => tab.textContent?.trim())).toEqual([
@@ -42,18 +48,21 @@ describe('App', () => {
       'Slovo',
       '20 otázek',
       'Souboj',
+      'Piškvorky',
     ]);
 
     const numberPanel = el.querySelector<HTMLElement>('#panel-number');
     const rpgPanel = el.querySelector<HTMLElement>('#panel-rpg');
+    const piskvorkyPanel = el.querySelector<HTMLElement>('#panel-piskvorky');
     expect(numberPanel?.hasAttribute('hidden')).toBe(false);
     expect(rpgPanel?.hasAttribute('hidden')).toBe(true);
+    expect(piskvorkyPanel?.hasAttribute('hidden')).toBe(true);
 
-    tabs.find((tab) => tab.textContent?.trim() === 'Souboj')?.click();
+    tabs.find((tab) => tab.textContent?.trim() === 'Piškvorky')?.click();
     fixture.detectChanges();
-    expect(rpgPanel?.hasAttribute('hidden')).toBe(false);
+    expect(piskvorkyPanel?.hasAttribute('hidden')).toBe(false);
     expect(numberPanel?.hasAttribute('hidden')).toBe(true);
-    expect(el.querySelector<HTMLButtonElement>('#tab-rpg')?.getAttribute('aria-selected')).toBe(
+    expect(el.querySelector<HTMLButtonElement>('#tab-piskvorky')?.getAttribute('aria-selected')).toBe(
       'true',
     );
     expect(el.querySelector<HTMLButtonElement>('#tab-number')?.getAttribute('aria-selected')).toBe(

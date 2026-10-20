@@ -1,0 +1,263 @@
+<article class="game">
+  <header class="game-head">
+    <p class="game-kicker">Hra šestá</p>
+    <h2 class="game-title">Piškvorky</h2>
+    <p class="game-lede">
+      Gomoku na desce 15×15: pět kamenů v řadě vyhrává, X začíná. Za každého hráče se na startu
+      zvolí člověk nebo model z Ollamy – modely umí hrát i samy proti sobě.
+    </p>
+  </header>
+
+  <div class="piskvorky-layout">
+    <section class="piskvorky-arena" [attr.aria-busy]="pending()">
+      @if (error(); as err) {
+        <div class="banner banner-error" role="alert">
+          <p>{{ err.message }}</p>
+          <div class="banner-actions">
+            @if (view(); as v) {
+              <button
+                type="button"
+                class="btn btn-recover"
+                (click)="refreshGame()"
+                [disabled]="pending()"
+              >
+                Obnovit stav
+              </button>
+            }
+            <button
+              type="button"
+              class="btn btn-restart"
+              (click)="startGame()"
+              [disabled]="pending() || !!view()?.inProgress"
+            >
+              Nová hra
+            </button>
+          </div>
+          <p class="banner-note">Tah se automaticky neopakuje. Stav obnovíte tlačítkem.</p>
+        </div>
+      }
+
+      @if (!view()) {
+        <div class="panel start-panel">
+          <h3 class="panel-title">Deska čeká</h3>
+          <p class="hint">
+            Zvolte hráče X a O vpravo a začněte hrát. Kdo je na tahu, je vždy vidět nad deskou.
+          </p>
+          <button
+            type="button"
+            class="btn btn-accent btn-restart"
+            (click)="startGame()"
+            [disabled]="pending()"
+          >
+            Nová hra
+          </button>
+          @if (pending()) {
+            <p class="busy-hint" role="status">Rozdávám kameny…</p>
+          }
+        </div>
+      } @else if (view(); as v) {
+        <div class="panel battle-panel" [attr.data-session-id]="v.id">
+          <header class="battle-head">
+            <div class="status-row">
+              <span class="chip chip-strong">Tah {{ v.moveNumber }}</span>
+              @if (v.status === 'playing') {
+                <span class="chip">
+                  Na tahu: {{ v.current }} ({{ modeLabel(v, v.current) }})
+                </span>
+              }
+              <span class="chip">X: {{ modeLabel(v, 'X') }} · O: {{ modeLabel(v, 'O') }}</span>
+            </div>
+          </header>
+
+          @if (resultTitle(v); as title) {
+            <div
+              class="banner"
+              role="status"
+              [class.banner-success]="v.status === 'x_won' || v.status === 'o_won'"
+              [class.banner-info]="v.status === 'draw'"
+            >
+              <h3 class="banner-title">{{ title }}</h3>
+              @if (v.winningLine) {
+                <p>Vítězná pětka je na desce zvýrazněná.</p>
+              }
+            </div>
+          }
+
+          @if (fallbackMove(); as fallback) {
+            <div class="banner banner-warn" role="status">
+              <h3 class="banner-title">Tah převzala záložní heuristika</h3>
+              <p>
+                Model
+                @if (fallback.model; as fallbackModel) {
+                  {{ fallbackModel }}
+                }
+                nedokončil platný tah
+                @if (fallback.fallbackReason; as reason) {
+                  ({{ reason }})
+                }
+                a pole vybrala záložní heuristika. Není to tah modelu.
+              </p>
+            </div>
+          }
+
+          <div class="board-wrap">
+            <div class="board" role="grid" [attr.aria-label]="'Deska piškvorek ' + v.size + '×' + v.size">
+              @for (cell of cells(); track cell.index) {
+                @if (cell.mark === '.') {
+                  <button
+                    type="button"
+                    class="cell cell-free"
+                    [class.cell-last]="cell.last"
+                    [disabled]="!cell.playable"
+                    (click)="play(cell.index)"
+                    [attr.aria-label]="'Prázdné pole, řádek ' + cell.row + ', sloupec ' + cell.col"
+                    [title]="'řádek ' + cell.row + ', sloupec ' + cell.col"
+                  ></button>
+                } @else {
+                  <div
+                    class="cell cell-mark"
+                    [class.cell-x]="cell.mark === 'X'"
+                    [class.cell-o]="cell.mark === 'O'"
+                    [class.cell-last]="cell.last"
+                    [class.cell-win]="cell.winning"
+                    [attr.aria-label]="
+                      cell.mark + ', řádek ' + cell.row + ', sloupec ' + cell.col
+                    "
+                  >
+                    {{ cell.mark }}
+                  </div>
+                }
+              }
+            </div>
+          </div>
+          <p class="board-note mono">souřadnice řádků i sloupců 0–14 (stejné jako v výzvě modelu)</p>
+
+          @if (v.status === 'playing') {
+            @if (v.inProgress || (pending() && isModelTurn(v))) {
+              <p class="thinking" role="status">Model přemýšlí…</p>
+            }
+            @if (v.inProgress) {
+              <button
+                type="button"
+                class="btn btn-recover"
+                (click)="refreshGame()"
+                [disabled]="pending()"
+              >
+                Obnovit stav
+              </button>
+            }
+            <div class="restart-row">
+              <button
+                type="button"
+                class="btn btn-restart"
+                (click)="startGame()"
+                [disabled]="pending() || v.inProgress"
+              >
+                Nová hra
+              </button>
+            </div>
+          } @else {
+            <div class="restart-row">
+              <button
+                type="button"
+                class="btn btn-accent btn-restart"
+                (click)="startGame()"
+                [disabled]="pending()"
+              >
+                Nová hra
+              </button>
+            </div>
+          }
+        </div>
+      }
+    </section>
+
+    <aside class="panel piskvorky-setup" aria-label="Nastavení hráčů">
+      <h3 class="panel-title">Hráči pro další hru</h3>
+
+      <label class="field-label" for="x-model-select">Hráč X</label>
+      <select
+        id="x-model-select"
+        class="field"
+        [disabled]="modelsStatus() === 'loading'"
+        [ngModel]="selectedXModel()"
+        (ngModelChange)="selectedXModel.set($event)"
+      >
+        <option [value]="humanValue">Člověk (bez modelu)</option>
+        @if (xMissing()) {
+          <option [value]="selectedXModel()">{{ selectedXModel() }} (nyní nedostupný)</option>
+        }
+        @for (model of models(); track model.name) {
+          <option [value]="model.name">{{ model.name }} ({{ formatSize(model.sizeBytes) }})</option>
+        }
+      </select>
+
+      <label class="field-label" for="o-model-select">Hráč O</label>
+      <select
+        id="o-model-select"
+        class="field"
+        [disabled]="modelsStatus() === 'loading'"
+        [ngModel]="selectedOModel()"
+        (ngModelChange)="selectedOModel.set($event)"
+      >
+        <option [value]="humanValue">Člověk (bez modelu)</option>
+        @if (oMissing()) {
+          <option [value]="selectedOModel()">{{ selectedOModel() }} (nyní nedostupný)</option>
+        }
+        @for (model of models(); track model.name) {
+          <option [value]="model.name">{{ model.name }} ({{ formatSize(model.sizeBytes) }})</option>
+        }
+      </select>
+
+      @switch (modelsStatus()) {
+        @case ('loading') {
+          <p class="models-note" role="status">Načítám seznam modelů…</p>
+        }
+        @case ('ready') {
+          @if (models().length === 0) {
+            <div class="banner banner-info" role="status">
+              <p>
+                Ollama běží, ale nemá nainstalované žádné modely. Hrát mohou dva lidé. Modely
+                nainstalujte v Ollamě a seznam obnovte.
+              </p>
+            </div>
+          }
+        }
+        @case ('unavailable') {
+          <div class="banner banner-warn" role="status">
+            <p>
+              Ollama není dostupná
+              @if (modelsMessage(); as message) {
+                – {{ message }}
+              }
+              . Hrát mohou dva lidé.
+            </p>
+          </div>
+        }
+      }
+
+      @if (xMissing() || oMissing()) {
+        <p class="models-note models-warning">
+          Vybraný model nyní není v seznamu. Obnovte modely nebo výslovně zvolte člověka.
+        </p>
+      }
+      @if (anyModelSelected()) {
+        <p class="models-note models-warning">
+          Pozor: první tah modelu může trvat déle – Ollama nahrává model do paměti.
+        </p>
+      }
+
+      <button
+        type="button"
+        class="btn btn-refresh"
+        (click)="loadModels()"
+        [disabled]="modelsPending()"
+      >
+        Obnovit modely
+      </button>
+      <p class="hint">
+        Výběr platí pro příští hru; běžící hra vždy ukazuje své skutečné hráče v řádku nad deskou.
+      </p>
+    </aside>
+  </div>
+</article>

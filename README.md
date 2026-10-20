@@ -1,8 +1,8 @@
 # Papírová arkáda
 
-Pět jednoduchých her proti serveru, vše česky na jedné stránce: hádání čísla, šibenice,
-hádání slova (Wordle), dvacet otázek s učením a RPG souboj, ve kterém může protivníka
-ovládat jazykový model z Ollamy.
+Šest jednoduchých her proti serveru, vše česky na jedné stránce: hádání čísla, šibenice,
+hádání slova (Wordle), dvacet otázek s učením, RPG souboj, ve kterém může protivníka
+ovládat jazykový model z Ollamy, a piškvorky 15×15, kde můžou obě strany hrát modely.
 
 Stack: **ASP.NET Core (`.NET 10`, bez NuGet balíčků)** na pozadí a **Angular 22**
 (standalone komponenty, signals) na papíře. Ollama je volitelná — bez ní hraje
@@ -17,6 +17,7 @@ protivník klasická heuristická AI.
 | **Hádej slovo** | Wordle ve stylu: 5 písmen, 6 pokusů, zpětná vazba po pozicích se správným počítáním duplicit (dvě stejná písmena ≠ dvě žlutá tajemství). |
 | **20 otázek** | Server se ptá ano/ne, poslední položkou je i jeho tip (limit 20). Když se splete, naučíte ho: nový pojem + otázka, která je pro něj ANO a pro marný tip NE. Naučený strom zůstává (v paměti serveru) i pro další hry. |
 | **Souboj (RPG)** | Tla na tlač: útok (10–18), speciální útok (20–30, 30 % minout, cooldown 3 kola) a léčení (15–25). Protivník: klasická heuristika nebo model z Ollamy (tah + průpovídka), který při selhání čitelně spadne na heuristiku. |
+| **Piškvorky** | Gomoku 15×15: pět v řadě vyhrává (řádek, sloupec, diagonála), X začíná. Režim X i O (člověk nebo model z Ollamy) se volí při startu, povolen je i model proti modelu. Model sahá přes strukturovaný chat; po třech marných pokusech tah viditelně převezme záchranná heuristika. |
 
 ![Šibenice](docs/screenshots/sibenice.png)
 
@@ -39,16 +40,16 @@ Pak stačí otevřít <http://localhost:4200>.
 
 ### Ollama (volitelné)
 
-API čte nainstalované modely z Ollamy (`GET /api/llm/models`) a souboje s modelem
-zasílá přes `POST /api/chat` s vynuceným schématem odpovědi (`action` + `taunt`),
-bez streamování a bez „thinking“ bloků. Nastavení je v `SimpleGame/appsettings.json`
+API čte nainstalované modely z Ollamy (`GET /api/llm/models`) a tahy modelů (souboj: `action`
++ `taunt`, piškvorky: `row` + `col`) zasílá přes `POST /api/chat` s vynuceným schématem
+odpovědi, bez streamování a bez „thinking“ bloků. Nastavení je v `SimpleGame/appsettings.json`
 (sekce `Ollama`: `BaseUrl`, časové limity 3 s pro seznam modelů a 45 s pro tah,
 `KeepAlive`). Zásadní chování:
 
 - seznam modelů se kešuje (30 s dostupná Ollama, 3 s nedostupná, tlačítko v UI aktualizuje hned);
-- do souboje lze zvolit jen model ze seznamu; nedostupná Ollama = `503`,
+- do hry s modelem lze zvolit jen model ze seznamu; nedostupná Ollama = `503`,
   neexistující model = `400`;
-- když model někdy neodpoví, vrátí neplatný tah, minout cooldown nebo chybí,
+- když model někdy neodpoví, vrátí neplatná data, minout cooldown nebo chybí,
   tah čitelně převezme klasická heuristika (v protokolu souboje je důvod);
 - embeddingový model (např. `nomic-embed-text`) nemá chat rozhraní — fallback
   se ukáže se stručným vysvětlením.
@@ -64,8 +65,8 @@ Ollama se ze kontejneru hledá na `host.docker.internal:11434` (lze přepsat pro
 ## Testy
 
 ```bash
-dotnet test SimpleGame.slnx                  # 114 backendových testů (xUnit)
-npm test --prefix simple-game-ui             # 19 UI testů (vitest, spustí jednou)
+dotnet test SimpleGame.slnx                  # 163 backendových testů (xUnit)
+npm test --prefix simple-game-ui             # 32 UI testů (vitest, spustí jednou)
 ```
 
 ![Hádej slovo](docs/screenshots/hadej-slovo.png)
@@ -85,6 +86,7 @@ hra, 409 konflikt, 429 limit relací, 503 nedostupná Ollama/zastavující serve
 | POST | `/api/games/word/start`, `/word/{id}/guess` | nová hra a tip |
 | POST | `/api/games/twenty/start`, `/twenty/{id}/answer`, `/twenty/{id}/verdict`, `/twenty/{id}/teach` | otázka, hodnocení tipu, učení |
 | POST | `/api/games/rpg/start`, GET `/rpg/{id}`, POST `/rpg/{id}/action` | souboj |
+| POST | `/api/games/piskvorky/start`, GET `/piskvorky/{id}`, POST `/piskvorky/{id}/move` | piškvorky (tah modelu se posílá s `position: null`) |
 
 ## Poznámky k implementaci
 
@@ -94,6 +96,14 @@ hra, 409 konflikt, 429 limit relací, 503 nedostupná Ollama/zastavující serve
 - RPG kolo je **atomické**: tah hráče i tah protivníka se propočítají na kopii stavu
   a potvrdí najednou (`revision`); GET během kola vrací poslední potvrzený stav,
   souběh tlačítek řeší 409 a UI po selhání sítě nabízí obnovu stavem, ne opakovaný POST.
+- Piškvorky volí režim X i O (člověk nebo model) při startu hry a během hry se
+  nemění; automatické tahy dělají **pouze decision modely** přes strukturovaný chat
+  (`row` + `col` 0–14). Jeden požadavek zahraje vždy jen jeden tah — UI samo pošle
+  tah modelu s `position: null`, jakmile je na tahu (včetně úvodního tahu X a souvislého
+  sledu model proti modelu). Po třech marných pokusech (timeout, chyba spojení,
+  neplatné či obsazené pole) převezme tah viditelně **záchranná heuristika** jako v RPG:
+  dokončí vlastní pětku, zablokuje soupeřovu, jinak zvolí volné sousední pole.
+  Tah je atomický jako v RPG — souběžné kliknutí vrací 409, zrušený tah se zahodí.
 - Dvacet otázek sdílí jeden strom: každá hra hraje na neměnném snímku, učení
   publikuje nový kořen a současná lekce u stejného listu dostane 409, aby si hry
   nepřepisovaly lekce navzájem.

@@ -6,6 +6,7 @@ import {
   HangmanState,
   LlmModelsResponse,
   NumberGameState,
+  PiskvorkyState,
   RpgAction,
   RpgState,
   TwentyState,
@@ -115,6 +116,23 @@ export class GameApiService {
   rpgAction(id: string, action: RpgAction, expectedRevision: number): Observable<RpgState> {
     return this.post<RpgState>(`${this.gamesUrl}/rpg/${encodeURIComponent(id)}/action`, {
       action,
+      expectedRevision,
+    });
+  }
+
+  startPiskvorky(xModel: string | null, oModel: string | null): Observable<PiskvorkyState> {
+    return this.post<PiskvorkyState>(`${this.gamesUrl}/piskvorky/start`, { xModel, oModel });
+  }
+
+  getPiskvorky(id: string): Observable<PiskvorkyState> {
+    return this.http
+      .get<PiskvorkyState>(`${this.gamesUrl}/piskvorky/${encodeURIComponent(id)}`)
+      .pipe(catchError((err: unknown) => throwError(() => toApiError(err))));
+  }
+
+  piskvorkyMove(id: string, position: number | null, expectedRevision: number): Observable<PiskvorkyState> {
+    return this.post<PiskvorkyState>(`${this.gamesUrl}/piskvorky/${encodeURIComponent(id)}/move`, {
+      position,
       expectedRevision,
     });
   }

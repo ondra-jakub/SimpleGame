@@ -138,11 +138,68 @@ public sealed class ApiTests
         Assert.Equal("conflict", (await duplicate.Content.ReadFromJsonAsync<ApiError>())!.Code);
     }
 
+    [Fact]
+    public async Task PiskvorkyStartBothHumansAndModelStartsRequireOllama()
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        var start = await client.PostAsJsonAsync("/api/games/piskvorky/start", new { xModel = (string?)null, oModel = (string?)null });
+        start.EnsureSuccessStatusCode();
+        var view = await start.Content.ReadFromJsonAsync<Games.PiskvorkyView>();
+        Assert.Equal("human", view!.XMode);
+        Assert.Equal("human", view.OMode);
+        Assert.Equal(225, view.Board.Length);
+        Assert.Equal("X", view.Current);
+
+        using var withModel = await client.PostAsJsonAsync("/api/games/piskvorky/start", new { xModel = "llama3", oModel = (string?)null });
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, withModel.StatusCode);
+        Assert.Equal("ollama_unavailable", (await withModel.Content.ReadFromJsonAsync<ApiError>())!.Code);
+
+        using var missing = await client.PostAsJsonAsync($"/api/games/piskvorky/{Guid.NewGuid()}/move", new { position = 0, expectedRevision = 0 });
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        Assert.Equal("session_not_found", (await missing.Content.ReadFromJsonAsync<ApiError>())!.Code);
+    }
+
+    [Fact]
+    public async Task PiskvorkyHumanMovesValidateContractAndRecoverViaGet()
+    {
+        await using var factory = Factory();
+        using var client = factory.CreateClient();
+        var start = await client.PostAsJsonAsync("/api/games/piskvorky/start", new { xModel = (string?)null, oModel = (string?)null });
+        var view = await start.Content.ReadFromJsonAsync<Games.PiskvorkyView>();
+        var route = $"/api/games/piskvorky/{view!.Id}";
+
+        using var missingPosition = await client.PostAsJsonAsync(route + "/move", new { expectedRevision = 0 });
+        Assert.Equal(HttpStatusCode.BadRequest, missingPosition.StatusCode);
+        Assert.Equal("invalid_input", (await missingPosition.Content.ReadFromJsonAsync<ApiError>())!.Code);
+        using var occupiedBeforeStart = await client.PostAsJsonAsync(route + "/move", new { position = 225, expectedRevision = 0 });
+        Assert.Equal(HttpStatusCode.BadRequest, occupiedBeforeStart.StatusCode);
+
+        var move = await client.PostAsJsonAsync(route + "/move", new { position = 112, expectedRevision = 0 });
+        move.EnsureSuccessStatusCode();
+        var after = await move.Content.ReadFromJsonAsync<Games.PiskvorkyView>();
+        Assert.Equal(1, after!.Revision);
+        Assert.Equal("human", after.LastMove!.Source);
+        Assert.Equal(112, after.LastMove.Position);
+
+        using var occupied = await client.PostAsJsonAsync(route + "/move", new { position = 112, expectedRevision = 1 });
+        Assert.Equal(HttpStatusCode.BadRequest, occupied.StatusCode);
+        using var stale = await client.PostAsJsonAsync(route + "/move", new { position = 0, expectedRevision = 0 });
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+
+        var confirmed = await client.GetFromJsonAsync<Games.PiskvorkyView>(route);
+        Assert.Equal(1, confirmed!.Revision);
+        Assert.Equal("O", confirmed.Current);
+        Assert.False(confirmed.InProgress);
+    }
+
     private sealed class OfflineOllama : IOllamaClient
     {
         public Task<ModelsView> GetModelsAsync(bool refresh, CancellationToken cancellationToken) =>
             Task.FromResult(new ModelsView(false, [], "Offline pro test."));
         public Task<OpponentDecision> ChooseMoveAsync(string model, OpponentContext context, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("A classic game must not call Ollama.");
+        public Task<PiskvorkyDecision> ChooseSquareAsync(string model, PiskvorkyContext context, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("A classic game must not call Ollama.");
     }
 }

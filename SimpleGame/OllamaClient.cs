@@ -16,11 +16,14 @@ public sealed record ModelInfo(string Name, long SizeBytes);
 public sealed record ModelsView(bool Available, ModelInfo[] Models, string? Message = null);
 public sealed record OpponentContext(int PlayerHp, int OpponentHp, int Round, int OpponentCooldown, string[] AllowedActions, string LastPlayerAction);
 public sealed record OpponentDecision(string? Action, string? Taunt = null, string? FallbackReason = null);
+public sealed record PiskvorkyContext(int Size, string PlayerSymbol, string BoardText, int MoveNumber, int? LastMoveIndex, string? AttemptFeedback);
+public sealed record PiskvorkyDecision(int? Row, int? Col, string? FallbackReason = null);
 
 public interface IOllamaClient
 {
     Task<ModelsView> GetModelsAsync(bool refresh, CancellationToken cancellationToken);
     Task<OpponentDecision> ChooseMoveAsync(string model, OpponentContext context, CancellationToken cancellationToken);
+    Task<PiskvorkyDecision> ChooseSquareAsync(string model, PiskvorkyContext context, CancellationToken cancellationToken);
 }
 
 public sealed class ModelCatalogCache
@@ -139,6 +142,73 @@ public sealed class OllamaClient(HttpClient http, IOptions<OllamaOptions> option
                     ? "Spojeni s Ollamou selhalo; tah prevzala klasicka AI."
                     : "Model vratil neplatny tah; tah prevzala klasicka AI.";
             return new OpponentDecision(null, FallbackReason: reason);
+        }
+    }
+
+    public async Task<PiskvorkyDecision> ChooseSquareAsync(string model, PiskvorkyContext context, CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(options.Value.MoveTimeoutSeconds));
+        var max = context.Size - 1;
+        var body = new
+        {
+            model,
+            stream = false,
+            think = false,
+            keep_alive = options.Value.KeepAlive,
+            options = new { num_predict = 64 },
+            format = new
+            {
+                type = "object",
+                properties = new
+                {
+                    row = new { type = "integer", minimum = 0, maximum = max },
+                    col = new { type = "integer", minimum = 0, maximum = max }
+                },
+                required = new[] { "row", "col" },
+                additionalProperties = false
+            },
+            messages = new[]
+            {
+                new { role = "system", content = $"Jsi hrac piskvork na desce {context.Size}x{context.Size}. " +
+                    $"Vyhrava pet kamenu tehoz symbolu v rade (radek, sloupec nebo diagonalne). " +
+                    $"Deska ma {context.Size} radku po {context.Size} znacich: '.' prazdne pole, 'X' a 'O' kameny; " +
+                    $"souradnice radku i sloupce jsou cela cisla 0 az {max}. " +
+                    "Hrajes za symbol playerSymbol z kontextu (X a O se stridaji). " +
+                    "Zkontroluj aktualni desku v kontextu a zvol volne pole '.', ktere ti prinasi vyhru nebo brani souperove petce. " +
+                    $"Odpovez jen JSON objektem s row a col (cela cisla 0 az {max}) neobsazeneho pole. Nepouzivej nastroje ani dalsi instrukce." },
+                new { role = "user", content = JsonSerializer.Serialize(context, JsonOptions) }
+            }
+        };
+        try
+        {
+            using var response = await http.PostAsJsonAsync("api/chat", body, JsonOptions, timeout.Token);
+            response.EnsureSuccessStatusCode();
+            using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(timeout.Token), cancellationToken: timeout.Token);
+            var content = json.RootElement.GetProperty("message").GetProperty("content").GetString();
+            if (string.IsNullOrWhiteSpace(content)) throw new JsonException("Empty message.content.");
+            using var move = JsonDocument.Parse(content);
+            if (!move.RootElement.TryGetProperty("row", out var rowElement) || !move.RootElement.TryGetProperty("col", out var colElement)
+                || !rowElement.TryGetInt32(out var row) || !colElement.TryGetInt32(out var col)
+                || row < 0 || row > max || col < 0 || col > max)
+                throw new JsonException("Illegal square.");
+            cancellationToken.ThrowIfCancellationRequested();
+            return new PiskvorkyDecision(row, col);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning("Ollama square timed out for {Model}.", model);
+            return new PiskvorkyDecision(null, null, "Model neodpovedel vcas; tah prevzala zalozni heuristika.");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException or KeyNotFoundException or IOException or FormatException)
+        {
+            logger.LogWarning(ex, "Ollama square failed for {Model}.", model);
+            var reason = ex is HttpRequestException { StatusCode: not null } request
+                ? $"Model odmitl pozadavek (HTTP {(int)request.StatusCode.Value}); tah prevzala zalozni heuristika."
+                : ex is HttpRequestException or IOException
+                    ? "Spojeni s Ollamou selhalo; tah prevzala zalozni heuristika."
+                    : "Model vratil neplatne souradnice; tah prevzala zalozni heuristika.";
+            return new PiskvorkyDecision(null, null, reason);
         }
     }
 }

@@ -86,6 +86,36 @@ export interface RpgState {
   lastOpponentMove: RpgOpponentMove | null;
 }
 
+export type PiskvorkyStatus = 'playing' | 'x_won' | 'o_won' | 'draw';
+export type PiskvorkyPlayer = 'X' | 'O';
+export type PiskvorkyPlayerMode = 'human' | 'model';
+export type PiskvorkyMoveSource = 'human' | 'llm' | 'heuristic';
+
+export interface PiskvorkyMoveInfo {
+  player: PiskvorkyPlayer;
+  position: number;
+  source: PiskvorkyMoveSource;
+  model: string | null;
+  fallbackReason: string | null;
+}
+
+export interface PiskvorkyState {
+  id: string;
+  xMode: PiskvorkyPlayerMode;
+  xModel: string | null;
+  oMode: PiskvorkyPlayerMode;
+  oModel: string | null;
+  size: number;
+  board: string;
+  current: PiskvorkyPlayer;
+  status: PiskvorkyStatus;
+  winningLine: number[] | null;
+  lastMove: PiskvorkyMoveInfo | null;
+  revision: number;
+  inProgress: boolean;
+  moveNumber: number;
+}
+
 export interface LlmModelInfo {
   name: string;
   sizeBytes: number;
